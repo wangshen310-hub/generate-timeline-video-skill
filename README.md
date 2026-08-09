@@ -43,6 +43,8 @@ cp -R generate-timeline-video "${CODEX_HOME:-$HOME/.codex}/skills/"
 ```
 
 ## 命令行渲染
+?????? `python3`??? Windows ????? `python`??????? `python3` ??? `python`?
+
 
 ```bash
 SCRIPT=generate-timeline-video/scripts/timeline_video.py
@@ -65,10 +67,71 @@ python3 "$SCRIPT" probe my-video/output/final.mp4 --manifest my-video/timeline.j
 
 - [海边跑步时间线](seaside-running-test/timeline.json)
 - [24 fps 演示视频](seaside-running-test/output/seaside-running.mp4)
+- [固定回归基准与实测记录](seaside-running-test/README.md)
 
 演示视频技术指标：1280×720、24 fps、72 帧、3 秒、H.264 MP4，无音轨。
 
 这是一个刻意使用稀疏关键帧的插值压力测试。跑步包含大幅肢体运动，仅用三个关键帧会在中间帧出现可见的光流重影；实际制作应把关键帧间隔缩短到约 0.5-1 秒，或者接入更强的专用视频/插帧模型。
+
+## Quality controls and optional backends
+
+- Byte-identical cut boundaries are de-duplicated without changing the declared
+  frame count or duration.
+- The balanced FFmpeg optical-flow profile remains the default. The
+  large-motion profile is experimental and must pass project-specific visual
+  QA before use.
+- RIFE ncnn Vulkan is supported as an optional backend through explicit CLI
+  paths. Its executable and model are not bundled with this repository.
+  Recursive midpoint interpolation is the quality-first default; direct
+  arbitrary-timestep interpolation remains available when speed matters.
+- Sparse optical-flow or RIFE shots longer than one second produce a warning so
+  visually risky timelines are not silently accepted.
+- A completed render is probed before it atomically replaces the requested
+  output. Even with `--force`, the manifest and referenced source media cannot
+  be used as output paths.
+
+Example profile override:
+
+    python3 "$SCRIPT" render my-video/timeline.json \
+      --output my-video/output/final.mp4 \
+      --optical-flow-profile large-motion
+
+Example optional RIFE render:
+
+    python3 "$SCRIPT" render my-video/timeline.json \
+      --interpolation rife \
+      --rife-executable /path/to/rife-ncnn-vulkan \
+      --rife-model /path/to/rife-v4.6 \
+      --rife-gpu 0 \
+      --rife-strategy recursive \
+      --strict
+
+See [interpolation-backends.md](generate-timeline-video/references/interpolation-backends.md)
+for backend selection, GitHub implementation comparisons, licenses, and
+fallback behavior.
+
+## Regression benchmark
+
+Use the same source media and compare a candidate against a known baseline:
+
+    python3 "$SCRIPT" benchmark my-video/output/candidate.mp4 \
+      --baseline my-video/output/baseline.mp4
+
+The JSON report checks geometry and reports FFmpeg signalstats temporal-luma
+difference, temporal-luma jerk, near-duplicate adjacent frame pairs, and the
+five frame locations with the largest motion change. These are descriptive
+regression signals, not automatic proof of visual quality; always pair them
+with first/middle/last-frame and transition inspection.
+
+## Tests
+
+The test suite uses only Python's standard library. FFmpeg integration tests run
+automatically when ffmpeg and ffprobe are on PATH:
+
+    python3 -m unittest discover -s tests -v
+
+GitHub Actions runs the same suite and validates the fixed seaside demo
+manifest on every push and pull request.
 
 ## License
 
