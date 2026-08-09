@@ -43,6 +43,11 @@ MOTIONS = {
     "pan-up",
     "pan-down",
 }
+SUBJECT_MOTION_DEFAULT_GAPS = {
+    "none": None,
+    "slow": 1.0,
+    "articulated": 0.25,
+}
 TRANSITIONS = {
     "cut",
     "fade",
@@ -139,9 +144,65 @@ def interpolation_for(shot: dict[str, Any]) -> str:
     default = "optical-flow" if shot.get("end_image") else "hold"
     return str(shot.get("interpolation", default))
 
-def intermediate_images_for(shot: dict[str, Any]) -> list[str]:
+def intermediate_keyframes_for(shot: dict[str, Any]) -> list[tuple[str, float | None]]:
     values = shot.get("intermediate_images", [])
-    return values if isinstance(values, list) else []
+    if not isinstance(values, list):
+        return []
+    keyframes: list[tuple[str, float | None]] = []
+    for value in values:
+        if isinstance(value, str):
+            keyframes.append((value, None))
+        elif isinstance(value, dict) and isinstance(value.get("image"), str):
+            at = value.get("at")
+            keyframes.append((value["image"], float(at) if is_number(at) else None))
+    return keyframes
+
+
+def intermediate_images_for(shot: dict[str, Any]) -> list[str]:
+    return [image for image, _ in intermediate_keyframes_for(shot)]
+
+
+def intermediate_keyframes_are_timed(shot: dict[str, Any]) -> bool:
+    keyframes = intermediate_keyframes_for(shot)
+    return bool(keyframes) and all(at is not None for _, at in keyframes)
+
+
+def keyframe_sequence_for(shot: dict[str, Any]) -> list[tuple[str, float]]:
+    end_image = shot.get("end_image")
+    duration = shot.get("duration")
+    if not isinstance(shot.get("start_image"), str) or not isinstance(end_image, str):
+        raise TimelineError(f"Shot {shot.get('id', '<unknown>')} needs start_image and end_image")
+    if not is_number(duration) or duration <= 0:
+        raise TimelineError(f"Shot {shot.get('id', '<unknown>')} needs a positive duration")
+
+    intermediates = intermediate_keyframes_for(shot)
+    if any(at is not None for _, at in intermediates) and not all(
+        at is not None for _, at in intermediates
+    ):
+        raise TimelineError("intermediate_images cannot mix timed objects and path strings")
+    if intermediates and all(at is not None for _, at in intermediates):
+        times = [float(at) for _, at in intermediates if at is not None]
+    else:
+        divisor = len(intermediates) + 1
+        times = [float(duration) * (index + 1) / divisor for index in range(len(intermediates))]
+    return [
+        (shot["start_image"], 0.0),
+        *((image, at) for (image, _), at in zip(intermediates, times)),
+        (end_image, float(duration)),
+    ]
+
+
+def subject_motion_for(shot: dict[str, Any]) -> str:
+    return str(shot.get("subject_motion", "none"))
+
+
+def max_keyframe_gap_for(shot: dict[str, Any], override: float | None = None) -> float | None:
+    if override is not None:
+        return float(override)
+    value = shot.get("max_keyframe_gap")
+    if is_number(value):
+        return float(value)
+    return SUBJECT_MOTION_DEFAULT_GAPS.get(subject_motion_for(shot))
 
 
 def motion_for(shot: dict[str, Any]) -> str:
@@ -304,16 +365,54 @@ def load_and_validate(
             elif path.is_file():
                 expect_stream(path, "video")
         intermediate_images = shot.get("intermediate_images", [])
+        intermediate_valid = True
+        intermediate_formats: set[str] = set()
+        timed_intermediate_times: list[float] = []
         if not isinstance(intermediate_images, list):
             errors.append(f"{prefix}.intermediate_images must be an array when present")
             intermediate_images = []
+            intermediate_valid = False
+
+        keyframe_paths: list[tuple[str, Path]] = []
+        if isinstance(start_image, str) and start_image.strip():
+            keyframe_paths.append(("start_image", resolve_media(base, start_image)))
         for keyframe_index, value in enumerate(intermediate_images):
-            if not isinstance(value, str) or not value.strip():
+            image_value: str | None = None
+            if isinstance(value, str):
+                intermediate_formats.add("path")
+                image_value = value
+            elif isinstance(value, dict):
+                intermediate_formats.add("timed")
+                image_value = value.get("image")
+                at = value.get("at")
+                if not is_number(at):
+                    errors.append(
+                        f"{prefix}.intermediate_images[{keyframe_index}].at must be a finite number"
+                    )
+                    intermediate_valid = False
+                elif not is_number(duration) or not 0 < float(at) < float(duration):
+                    errors.append(
+                        f"{prefix}.intermediate_images[{keyframe_index}].at must be inside the shot"
+                    )
+                    intermediate_valid = False
+                else:
+                    timed_intermediate_times.append(float(at))
+            else:
                 errors.append(
-                    f"{prefix}.intermediate_images[{keyframe_index}] must be a non-empty path"
+                    f"{prefix}.intermediate_images[{keyframe_index}] must be a path string "
+                    "or an object with image and at"
                 )
+                intermediate_valid = False
                 continue
-            path = resolve_media(base, value)
+
+            if not isinstance(image_value, str) or not image_value.strip():
+                errors.append(
+                    f"{prefix}.intermediate_images[{keyframe_index}] needs a non-empty image path"
+                )
+                intermediate_valid = False
+                continue
+            path = resolve_media(base, image_value)
+            keyframe_paths.append((f"intermediate_images[{keyframe_index}]", path))
             if require_files and not path.is_file():
                 errors.append(
                     f"{prefix}.intermediate_images[{keyframe_index}] does not exist: {path}"
@@ -321,17 +420,16 @@ def load_and_validate(
             elif path.is_file():
                 expect_stream(path, "video")
 
-        keyframe_paths: list[tuple[str, Path]] = []
-        if isinstance(start_image, str) and start_image.strip():
-            keyframe_paths.append(("start_image", resolve_media(base, start_image)))
-        for keyframe_index, value in enumerate(intermediate_images):
-            if isinstance(value, str) and value.strip():
-                keyframe_paths.append(
-                    (
-                        f"intermediate_images[{keyframe_index}]",
-                        resolve_media(base, value),
-                    )
-                )
+        if len(intermediate_formats) > 1:
+            errors.append(
+                f"{prefix}.intermediate_images cannot mix path strings and timed objects"
+            )
+            intermediate_valid = False
+        if timed_intermediate_times != sorted(timed_intermediate_times) or len(
+            timed_intermediate_times
+        ) != len(set(timed_intermediate_times)):
+            errors.append(f"{prefix}.intermediate_images at values must be strictly increasing")
+            intermediate_valid = False
         if isinstance(end_image, str) and end_image.strip():
             keyframe_paths.append(("end_image", resolve_media(base, end_image)))
 
@@ -349,6 +447,8 @@ def load_and_validate(
             and is_number(duration)
             and duration > 1.0
             and not intermediate_images
+            and shot.get("subject_motion") is None
+            and shot.get("max_keyframe_gap") is None
         ):
             warnings.append(
                 f"{prefix} spans {float(duration):.3f}s with only two keyframes; "
@@ -366,6 +466,35 @@ def load_and_validate(
                         f"{prefix} {first_label} and {second_label} are byte-identical; "
                         "interpolation cannot create new motion between them"
                     )
+
+        subject_motion = subject_motion_for(shot)
+        if subject_motion not in SUBJECT_MOTION_DEFAULT_GAPS:
+            errors.append(
+                f"{prefix}.subject_motion must be one of {sorted(SUBJECT_MOTION_DEFAULT_GAPS)}"
+            )
+        gap_value = shot.get("max_keyframe_gap")
+        if gap_value is not None and (not is_number(gap_value) or gap_value <= 0):
+            errors.append(f"{prefix}.max_keyframe_gap must be a positive finite number")
+        gap_limit = max_keyframe_gap_for(shot) if subject_motion in SUBJECT_MOTION_DEFAULT_GAPS else None
+        if (
+            interpolation in {"optical-flow", "rife"}
+            and intermediate_valid
+            and isinstance(start_image, str)
+            and isinstance(end_image, str)
+            and is_number(duration)
+            and gap_limit is not None
+            and gap_limit > 0
+        ):
+            sequence = keyframe_sequence_for(shot)
+            actual_max_gap = max(
+                right_at - left_at
+                for (_, left_at), (_, right_at) in zip(sequence, sequence[1:])
+            )
+            if actual_max_gap > gap_limit + 1e-9:
+                warnings.append(
+                    f"{prefix} maximum keyframe gap is {actual_max_gap:.3f}s, "
+                    f"above the {gap_limit:.3f}s motion limit; run plan-keyframes"
+                )
 
         optical_flow_profile = optical_flow_profile_for(shot)
         if optical_flow_profile not in OPTICAL_FLOW_PROFILES:
@@ -1080,6 +1209,38 @@ def distribute_intervals(total: int, segments: int, last_minimum: int = 1) -> li
     return intervals
 
 
+def distribute_timed_intervals(
+    total: int,
+    times: list[float],
+    duration: float,
+    last_minimum: int = 1,
+) -> list[int]:
+    """Map explicit keyframe times onto integer frame intervals."""
+    segments = len(times) - 1
+    if segments < 1 or duration <= 0:
+        raise TimelineError("Timed keyframes need at least two points and a positive duration")
+    if abs(times[0]) > 1e-9 or abs(times[-1] - duration) > 1e-9:
+        raise TimelineError("Timed keyframes must begin at 0 and end at the shot duration")
+    if any(right <= left for left, right in zip(times, times[1:])):
+        raise TimelineError("Timed keyframes must be strictly increasing")
+
+    minima = [1] * segments
+    minima[-1] = last_minimum
+    if total < sum(minima):
+        raise TimelineError(
+            f"Cannot distribute {total} frame intervals across {segments} timed keyframe segments"
+        )
+
+    boundaries = [0]
+    for index, at in enumerate(times[1:-1], start=1):
+        desired = int(math.floor(total * at / duration + 0.5))
+        minimum = boundaries[-1] + minima[index - 1]
+        maximum = total - sum(minima[index:])
+        boundaries.append(min(max(desired, minimum), maximum))
+    boundaries.append(total)
+    return [right - left for left, right in zip(boundaries, boundaries[1:])]
+
+
 def concat_keyframe_segments(
     ffmpeg: str,
     clips: list[Path],
@@ -1148,16 +1309,26 @@ def render_shot_keyframes(
     end_value = shot.get("end_image")
     if not isinstance(end_value, str):
         raise TimelineError(f"Shot {shot['id']} needs end_image for intermediate_images")
-    image_values = [shot["start_image"], *intermediate_images_for(shot), end_value]
+    keyframes = keyframe_sequence_for(shot)
+    image_values = [image for image, _ in keyframes]
     fps = int(data["fps"])
     frames = frame_count(float(shot["duration"]), fps)
     segment_count = len(image_values) - 1
     total_intervals = frames - 1 if include_endpoint else frames
-    intervals = distribute_intervals(
-        total_intervals,
-        segment_count,
-        last_minimum=1 if include_endpoint else 2,
-    )
+    last_minimum = 1 if include_endpoint else 2
+    if intermediate_keyframes_are_timed(shot):
+        intervals = distribute_timed_intervals(
+            total_intervals,
+            [at for _, at in keyframes],
+            float(shot["duration"]),
+            last_minimum=last_minimum,
+        )
+    else:
+        intervals = distribute_intervals(
+            total_intervals,
+            segment_count,
+            last_minimum=last_minimum,
+        )
     clips: list[Path] = []
     methods: list[str] = []
     for index, interval_count in enumerate(intervals):
@@ -1586,6 +1757,10 @@ def command_init(args: argparse.Namespace) -> int:
         raise TimelineError("shot-duration must contain at least 2 frames")
     if not args.title.strip():
         raise TimelineError("title must not be empty")
+    if args.max_keyframe_gap is not None and (
+        not is_number(args.max_keyframe_gap) or args.max_keyframe_gap <= 0
+    ):
+        raise TimelineError("max-keyframe-gap must be a positive finite number")
     transition_frames = min(max(1, frame_count(0.5, args.fps)), frames_per_shot - 1)
     transition_duration = transition_frames / args.fps
 
@@ -1608,6 +1783,7 @@ def command_init(args: argparse.Namespace) -> int:
             "end_image": f"keyframes/{shot_id}-end.png",
             "interpolation": "optical-flow",
             "motion": "static",
+            "subject_motion": args.subject_motion,
             "transition_to_next": {
                 "type": "fade" if index < args.shots - 1 else "cut",
                 "duration": transition_duration if index < args.shots - 1 else 0,
@@ -1615,6 +1791,9 @@ def command_init(args: argparse.Namespace) -> int:
             "prompt": f"Describe the composition and action for {shot_id}",
             "continuity": "Repeat unchanged identity, wardrobe, palette, lens, lighting, and aspect ratio",
         }
+        gap_limit = max_keyframe_gap_for(shot, args.max_keyframe_gap)
+        if gap_limit is not None:
+            shot["max_keyframe_gap"] = gap_limit
         shots.append(shot)
 
     payload = {
@@ -1628,6 +1807,135 @@ def command_init(args: argparse.Namespace) -> int:
     manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Created {manifest}")
     print("Generate the referenced keyframes, then run the validate command.")
+    return 0
+
+
+def plan_shot_keyframes(
+    shot: dict[str, Any],
+    manifest_dir: Path,
+    max_gap: float,
+) -> list[dict[str, Any]]:
+    """Return existing and missing keyframes at a bounded temporal spacing."""
+    if max_gap <= 0 or not math.isfinite(max_gap):
+        raise TimelineError("max-gap must be a positive finite number")
+    sequence = keyframe_sequence_for(shot)
+    planned: list[dict[str, Any]] = []
+
+    def entry(image: str, at: float, generated: bool) -> dict[str, Any]:
+        path = resolve_media(manifest_dir, image)
+        planned_name = f"{shot['id']}-dense-{round(at * 1000):06d}ms.png"
+        return {
+            "image": image,
+            "at": round(at, 6),
+            "status": "existing" if path.is_file() else "missing",
+            "generated_slot": generated or Path(image).name == planned_name,
+        }
+
+    planned.append(entry(sequence[0][0], sequence[0][1], False))
+    for (left_image, left_at), (right_image, right_at) in zip(sequence, sequence[1:]):
+        subdivisions = max(1, math.ceil((right_at - left_at) / max_gap - 1e-12))
+        for step in range(1, subdivisions):
+            at = left_at + (right_at - left_at) * step / subdivisions
+            image = f"keyframes/{shot['id']}-dense-{round(at * 1000):06d}ms.png"
+            planned.append(entry(image, at, True))
+        planned.append(entry(right_image, right_at, False))
+    return planned
+
+
+def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        newline="\n",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        temporary = Path(handle.name)
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def command_plan_keyframes(args: argparse.Namespace) -> int:
+    if args.max_gap is not None and (not is_number(args.max_gap) or args.max_gap <= 0):
+        raise TimelineError("max-gap must be a positive finite number")
+    manifest_path = args.manifest.expanduser().resolve()
+    data, warnings = load_and_validate(manifest_path, require_files=False, probe_files=False)
+    for warning in warnings:
+        eprint(f"WARNING: {warning}")
+
+    shot_plans: list[dict[str, Any]] = []
+    changed = False
+    for shot in data["shots"]:
+        if interpolation_for(shot) == "hold" or not isinstance(shot.get("end_image"), str):
+            continue
+        declared_motion = args.subject_motion or shot.get("subject_motion") or "articulated"
+        if declared_motion not in SUBJECT_MOTION_DEFAULT_GAPS:
+            raise TimelineError(
+                f"Shot {shot['id']} has unsupported subject_motion: {declared_motion}"
+            )
+        default_gap = SUBJECT_MOTION_DEFAULT_GAPS[declared_motion]
+        gap_limit = (
+            args.max_gap
+            if args.max_gap is not None
+            else max_keyframe_gap_for(shot) or default_gap
+        )
+        if gap_limit is None:
+            shot_plans.append(
+                {"id": shot["id"], "subject_motion": declared_motion, "status": "not-required"}
+            )
+            continue
+        planned = plan_shot_keyframes(shot, manifest_path.parent, float(gap_limit))
+        intermediates = [
+            {"image": item["image"], "at": item["at"]}
+            for item in planned[1:-1]
+        ]
+        missing = [item["image"] for item in planned if item["status"] == "missing"]
+        generated_missing = [
+            item["image"]
+            for item in planned
+            if item["status"] == "missing" and item["generated_slot"]
+        ]
+        shot_plans.append(
+            {
+                "id": shot["id"],
+                "subject_motion": declared_motion,
+                "max_keyframe_gap": float(gap_limit),
+                "keyframes": planned,
+                "missing_images": missing,
+                "generated_slots_missing": generated_missing,
+            }
+        )
+        if args.write:
+            updated = (
+                shot.get("subject_motion") != declared_motion
+                or shot.get("max_keyframe_gap") != float(gap_limit)
+                or shot.get("intermediate_images", []) != intermediates
+            )
+            shot["subject_motion"] = declared_motion
+            shot["max_keyframe_gap"] = float(gap_limit)
+            shot["intermediate_images"] = intermediates
+            changed = changed or updated
+
+    if args.write and changed:
+        write_json_atomic(manifest_path, data)
+    print(
+        json.dumps(
+            {
+                "status": "written" if args.write and changed else "planned",
+                "manifest": str(manifest_path),
+                "shots": shot_plans,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -1864,7 +2172,32 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--shot-duration", type=float, default=3.0)
     init_parser.add_argument("--size", type=parse_size, default=(1280, 720), metavar="WIDTHxHEIGHT")
     init_parser.add_argument("--fps", type=int, default=24)
+    init_parser.add_argument(
+        "--subject-motion",
+        choices=sorted(SUBJECT_MOTION_DEFAULT_GAPS),
+        default="none",
+        help="Expected subject motion; articulated defaults to a 0.25s keyframe gap",
+    )
+    init_parser.add_argument("--max-keyframe-gap", type=float)
     init_parser.set_defaults(handler=command_init)
+
+    plan_parser = subparsers.add_parser(
+        "plan-keyframes",
+        help="Plan dense timed keyframes and optionally update the timeline",
+    )
+    plan_parser.add_argument("manifest", type=Path)
+    plan_parser.add_argument("--max-gap", type=float, help="Maximum seconds between semantic poses")
+    plan_parser.add_argument(
+        "--subject-motion",
+        choices=sorted(SUBJECT_MOTION_DEFAULT_GAPS),
+        help="Override the declared subject motion for planned shots",
+    )
+    plan_parser.add_argument(
+        "--write",
+        action="store_true",
+        help="Atomically write timed intermediate_images placeholders to the manifest",
+    )
+    plan_parser.set_defaults(handler=command_plan_keyframes)
 
     validate_parser = subparsers.add_parser("validate", help="Validate a timeline and its media")
     validate_parser.add_argument("manifest", type=Path)

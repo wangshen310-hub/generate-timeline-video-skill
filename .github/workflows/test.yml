@@ -24,3 +24,5 @@ jobs:
         run: python generate-timeline-video/scripts/timeline_video.py validate seaside-running-test/timeline.json
       - name: Validate motion-positive demo manifest
         run: python generate-timeline-video/scripts/timeline_video.py validate seaside-running-motion-test/timeline.json
+      - name: Validate dense articulated-motion manifest
+        run: python generate-timeline-video/scripts/timeline_video.py validate dense-running-test/timeline.json

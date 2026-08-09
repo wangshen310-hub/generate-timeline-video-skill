@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "title": "Dense articulated running regression",
+  "fps": 24,
+  "width": 1280,
+  "height": 720,
+  "shots": [
+    {
+      "id": "shot-001",
+      "duration": 1.5,
+      "start_image": "keyframes/shot-001-start.png",
+      "end_image": "keyframes/shot-001-end.png",
+      "interpolation": "rife",
+      "motion": "static",
+      "subject_motion": "articulated",
+      "transition_to_next": {
+        "type": "cut",
+        "duration": 0
+      },
+      "prompt": "Side-profile woman completes a full left-to-right running gait cycle on wet sand at golden hour; every 0.25-second keyframe advances foot contact, push-off, flight, or opposite-foot landing.",
+      "continuity": "Same woman, orange sleeveless top, charcoal shorts, white shoes, dark ponytail, beach, horizon, golden-hour lighting, locked 50 mm side camera, 16:9, one subject.",
+      "max_keyframe_gap": 0.25,
+      "intermediate_images": [
+        {
+          "image": "keyframes/shot-001-dense-000250ms.png",
+          "at": 0.25
+        },
+        {
+          "image": "keyframes/shot-001-dense-000500ms.png",
+          "at": 0.5
+        },
+        {
+          "image": "keyframes/shot-001-dense-000750ms.png",
+          "at": 0.75
+        },
+        {
+          "image": "keyframes/shot-001-dense-001000ms.png",
+          "at": 1.0
+        },
+        {
+          "image": "keyframes/shot-001-dense-001250ms.png",
+          "at": 1.25
+        }
+      ],
+      "rife_strategy": "recursive"
+    }
+  ]
+}

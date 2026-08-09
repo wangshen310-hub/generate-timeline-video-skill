@@ -223,6 +223,126 @@ class TimelineVideoTests(unittest.TestCase):
         with self.assertRaises(timeline_video.TimelineError):
             timeline_video.distribute_intervals(2, 2, last_minimum=2)
 
+    def test_distribute_timed_intervals_respects_explicit_pose_times(self) -> None:
+        self.assertEqual(
+            timeline_video.distribute_timed_intervals(35, [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5], 1.5),
+            [6, 6, 6, 5, 6, 6],
+        )
+        with self.assertRaises(timeline_video.TimelineError):
+            timeline_video.distribute_timed_intervals(5, [0, 0.5, 0.5, 1], 1)
+
+    def test_timed_keyframes_validate_and_sparse_articulated_motion_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            manifest = root / "timeline.json"
+            payload = {
+                "version": 1,
+                "title": "Timed poses",
+                "fps": 24,
+                "width": 64,
+                "height": 64,
+                "shots": [
+                    {
+                        "id": "shot-001",
+                        "duration": 1.5,
+                        "start_image": "start.png",
+                        "intermediate_images": [{"image": "mid.png", "at": 0.75}],
+                        "end_image": "end.png",
+                        "interpolation": "rife",
+                        "subject_motion": "articulated",
+                    }
+                ],
+            }
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            _, warnings = timeline_video.load_and_validate(manifest, require_files=False)
+            self.assertTrue(any("above the 0.250s motion limit" in item for item in warnings))
+            payload["shots"][0]["intermediate_images"] = [
+                {"image": f"pose-{index}.png", "at": index * 0.25}
+                for index in range(1, 6)
+            ]
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            _, warnings = timeline_video.load_and_validate(manifest, require_files=False)
+            self.assertFalse(any("motion limit" in item for item in warnings))
+
+    def test_plan_keyframes_inserts_dense_timed_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            shot = {
+                "id": "shot-001",
+                "duration": 1.5,
+                "start_image": "keyframes/start.png",
+                "end_image": "keyframes/end.png",
+            }
+            plan = timeline_video.plan_shot_keyframes(shot, root, 0.25)
+            self.assertEqual(len(plan), 7)
+            self.assertEqual([item["at"] for item in plan], [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5])
+            self.assertEqual(plan[1]["image"], "keyframes/shot-001-dense-000250ms.png")
+            self.assertTrue(all(item["status"] == "missing" for item in plan))
+
+    def test_mixed_timed_and_legacy_keyframes_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            manifest = root / "timeline.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "title": "Mixed poses",
+                        "fps": 24,
+                        "width": 64,
+                        "height": 64,
+                        "shots": [
+                            {
+                                "id": "shot-001",
+                                "duration": 1.0,
+                                "start_image": "start.png",
+                                "intermediate_images": [
+                                    "legacy.png",
+                                    {"image": "timed.png", "at": 0.75},
+                                ],
+                                "end_image": "end.png",
+                                "interpolation": "rife",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(timeline_video.TimelineError, "cannot mix"):
+                timeline_video.load_and_validate(manifest, require_files=False)
+
+    def test_render_uses_explicit_keyframe_time_for_segment_frames(self) -> None:
+        data = {"width": 64, "height": 64, "fps": 8}
+        shot = {
+            "id": "shot-001",
+            "duration": 1.0,
+            "start_image": "start.png",
+            "intermediate_images": [{"image": "pose.png", "at": 0.25}],
+            "end_image": "end.png",
+            "interpolation": "blend",
+        }
+        segment_durations: list[float] = []
+
+        def fake_pair(_data: dict, segment: dict, *_args: object, **_kwargs: object) -> str:
+            segment_durations.append(segment["duration"])
+            return "blend"
+
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            with (
+                mock.patch.object(timeline_video, "render_shot_pair", side_effect=fake_pair),
+                mock.patch.object(timeline_video, "concat_keyframe_segments"),
+            ):
+                method = timeline_video.render_shot_keyframes(
+                    data, shot, root, root / "out.mp4", root,
+                    ffmpeg="ffmpeg", interpolation_override=None,
+                    optical_flow_profile_override=None, rife_strategy_override=None,
+                    include_endpoint=True, rife_runtime=None, rife_gpu=None, strict=True,
+                    preset="ultrafast", crf=18,
+                )
+        self.assertEqual(segment_durations, [3 / 8, 6 / 8])
+        self.assertEqual(method, "blend+3-keyframes")
+
     def test_rife_missing_runtime_falls_back_unless_strict(self) -> None:
         data = {"width": 64, "height": 64, "fps": 4}
         shot = {

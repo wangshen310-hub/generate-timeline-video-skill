@@ -7,7 +7,7 @@ This Codex skill turns a written timeline into a reproducible MP4 by generating 
 ## 工作原理
 
 1. Codex 把脚本拆成时间线和镜头。
-2. 图像生成能力创建少量、身份一致的关键帧。
+2. 项目先按动作密度规划带时间点的语义关键帧，再由图像生成能力创建身份一致的姿态图。
 3. `hold`、`blend` 或 FFmpeg motion-compensated interpolation 补齐中间帧。
 4. FFmpeg 合并镜头、转场和可选音轨。
 5. `ffprobe` 校验分辨率、帧率、帧数和时长。
@@ -18,7 +18,8 @@ This Codex skill turns a written timeline into a reproducible MP4 by generating 
 
 - `generate-timeline-video/`：Codex Skill 和无第三方 Python 依赖的渲染器。
 - `seaside-running-test/`：海边跑步测试的时间线、关键帧和 24 fps 成片。
-- `seaside-running-motion-test/`: a reproducible motion-positive demo with distinct stride keyframes.
+- `seaside-running-motion-test/`: an older three-pose-per-shot motion fixture.
+- `dense-running-test/`: the code-planned 0.25-second articulated-motion regression fixture.
 
 ## 依赖
 
@@ -44,7 +45,7 @@ cp -R generate-timeline-video "${CODEX_HOME:-$HOME/.codex}/skills/"
 ```
 
 ## 命令行渲染
-?????? `python3`??? Windows ????? `python`??????? `python3` ??? `python`?
+以下示例使用 `python3`；Windows 如果只有 `python`，直接替换命令名即可。
 
 
 ```bash
@@ -55,8 +56,11 @@ python3 "$SCRIPT" init my-video \
   --shots 3 \
   --shot-duration 3 \
   --size 1280x720 \
-  --fps 24
+  --fps 24 \
+  --subject-motion articulated
 
+python3 "$SCRIPT" plan-keyframes my-video/timeline.json --write
+# 先生成 plan-keyframes 输出中列出的所有 missing_images，再继续。
 python3 "$SCRIPT" validate my-video/timeline.json
 python3 "$SCRIPT" render my-video/timeline.json --output my-video/output/final.mp4
 python3 "$SCRIPT" probe my-video/output/final.mp4 --manifest my-video/timeline.json
@@ -72,7 +76,7 @@ python3 "$SCRIPT" probe my-video/output/final.mp4 --manifest my-video/timeline.j
 
 演示视频技术指标：1280×720、24 fps、72 帧、3 秒、H.264 MP4，无音轨。
 
-这是一个刻意使用稀疏关键帧的插值压力测试。跑步包含大幅肢体运动，仅用三个关键帧会在中间帧出现可见的光流重影；实际制作应把关键帧间隔缩短到约 0.5-1 秒，或者接入更强的专用视频/插帧模型。
+这是一个刻意使用稀疏关键帧的插值压力测试。跑步包含大幅肢体运动，仅用三个关键帧会在中间帧出现可见的光流重影；实际制作应先声明 `subject_motion: "articulated"`，用 `plan-keyframes --write` 把语义姿态间隔控制在约 0.25 秒，再生成对应图片；插帧后端只负责相邻姿态之间的补帧。
 
 ## Quality controls and optional backends
 
@@ -85,8 +89,9 @@ python3 "$SCRIPT" probe my-video/output/final.mp4 --manifest my-video/timeline.j
   paths. Its executable and model are not bundled with this repository.
   Recursive midpoint interpolation is the quality-first default; direct
   arbitrary-timestep interpolation remains available when speed matters.
-- Sparse optical-flow or RIFE shots longer than one second produce a warning so
-  visually risky timelines are not silently accepted.
+- Motion-density validation warns whenever semantic keyframe spacing exceeds the
+  declared limit (0.25 s by default for articulated action). `plan-keyframes`
+  can write the missing timed pose slots before any video render starts.
 - A completed render is probed before it atomically replaces the requested
   output. Even with `--force`, the manifest and referenced source media cannot
   be used as output paths.
@@ -140,6 +145,6 @@ manifest on every push and pull request.
 
 ## Motion-positive demo
 
-The fixed `seaside-running-test/` input is intentionally sparse for renderer regression. Use [`seaside-running-motion-test/`](seaside-running-motion-test/README.md) when evaluating articulated motion: each shot includes a distinct stride pose in `intermediate_images`, so RIFE has real foot-contact changes to interpolate.
+The fixed `seaside-running-test/` input is intentionally sparse for renderer regression. The older [`seaside-running-motion-test/`](seaside-running-motion-test/README.md) adds one stride midpoint per shot but is still too sparse to prove fluent articulated motion. Use `plan-keyframes --write` and the 0.25-second policy for production motion tests.
 
 The renderer now warns when adjacent optical-flow or RIFE keyframes are byte-identical, because interpolation cannot invent motion between duplicate poses.

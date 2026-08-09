@@ -14,10 +14,18 @@ Use UTF-8 JSON. Resolve all relative media paths from the directory containing `
   "shots": [
     {
       "id": "shot-001",
-      "duration": 3.0,
+      "duration": 1.5,
       "start_image": "keyframes/shot-001-start.png",
       "end_image": "keyframes/shot-001-end.png",
-      "intermediate_images": ["keyframes/shot-001-mid.png"],
+      "intermediate_images": [
+        {"image": "keyframes/shot-001-dense-000250ms.png", "at": 0.25},
+        {"image": "keyframes/shot-001-dense-000500ms.png", "at": 0.5},
+        {"image": "keyframes/shot-001-dense-000750ms.png", "at": 0.75},
+        {"image": "keyframes/shot-001-dense-001000ms.png", "at": 1.0},
+        {"image": "keyframes/shot-001-dense-001250ms.png", "at": 1.25}
+      ],
+      "subject_motion": "articulated",
+      "max_keyframe_gap": 0.25,
       "interpolation": "optical-flow",
       "motion": "zoom-in",
       "transition_to_next": {
@@ -69,12 +77,14 @@ Use UTF-8 JSON. Resolve all relative media paths from the directory containing `
 | `id` | yes | Unique filename-safe identifier. |
 | `duration` | yes | Shot duration in seconds before transition overlap. |
 | `start_image` | yes | First keyframe path. |
-| `intermediate_images` | no | Ordered paths for distinct poses between `start_image` and `end_image`; use for articulated motion instead of stretching one pair. |
+| `intermediate_images` | no | Either ordered path strings (legacy equal spacing) or ordered `{"image": path, "at": seconds}` objects. Do not mix forms. Prefer timed objects for subject motion. |
 | `end_image` | no | Last keyframe path; omit for a hold. |
 | `interpolation` | no | `hold`, `blend`, `optical-flow`, or optional `rife`; inferred from image count when omitted. |
 | `optical_flow_profile` | no | `balanced` by default, or experimental `large-motion`. |
 | `rife_strategy` | no | `recursive` by default for stable endpoints, or faster `direct`. |
 | `motion` | no | Camera preset; defaults to `static`. |
+| `subject_motion` | no | `none`, `slow`, or `articulated`. Defaults to `none`; `articulated` enforces a 0.25-second default gap. |
+| `max_keyframe_gap` | no | Positive maximum seconds between semantic keyframes; overrides the motion-class default. |
 | `transition_to_next` | no | Transition beginning near this shot's end. Defaults to a cut. |
 | `prompt` | no | Image-generation instruction retained for reproducibility. |
 | `continuity` | no | Invariants copied unchanged across related keyframe prompts. |
@@ -103,10 +113,13 @@ output_duration = output_frames / fps
 
 Use durations aligned to whole frames whenever possible. At 24 fps, one frame is `0.0416667` seconds. A 0.5-second transition is exactly 12 frames.
 When a subject changes pose, put every materially different pose in
-`intermediate_images`. The renderer distributes the shot's frame intervals
-across each adjacent pair, removes repeated pair boundaries, and preserves the
-declared total frame count. Interpolation cannot invent an unseen footstep from
-two keyframes that have the same leg pose.
+`intermediate_images`. Use `plan-keyframes timeline.json --write` to create
+deterministic timed placeholders before generating images. For articulated
+action, the default maximum gap is 0.25 seconds; slow subject motion defaults to
+1 second. The renderer maps explicit `at` values to integer frame intervals,
+removes repeated pair boundaries, and preserves the declared total frame count.
+Legacy path strings remain supported and are spaced evenly. Interpolation cannot
+invent an unseen footstep from two keyframes that have the same leg pose.
 For optical-flow and RIFE shots, validation also warns when adjacent keyframe files are byte-identical. Treat that warning as a missing-motion input defect, not as a renderer-quality problem. The reproducible [`seaside-running-motion-test`](../../seaside-running-motion-test/README.md) shows the expected layout.
 
 The final frame of one image pair is normally the intended end keyframe.

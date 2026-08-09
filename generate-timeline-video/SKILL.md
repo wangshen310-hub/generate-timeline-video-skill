@@ -29,10 +29,16 @@ Read [references/timeline-schema.md](references/timeline-schema.md) when authori
 Initialize a safe project skeleton:
 
 ```bash
-"$PYTHON" "$SCRIPT" init <project-dir> --title "<title>" --shots 3 --shot-duration 3 --size 1280x720 --fps 24
+"$PYTHON" "$SCRIPT" init <project-dir> --title "<title>" --shots 3 --shot-duration 3 --size 1280x720 --fps 24 --subject-motion articulated
 ```
 
-Translate the request into contiguous shots. Give each shot one visual purpose and put generation instructions in `prompt` plus invariant facts in `continuity`. Use two keyframes for visible motion and one for an intentional hold.
+Translate the request into contiguous shots. Give each shot one visual purpose and put generation instructions in `prompt` plus invariant facts in `continuity`. Use one image for an intentional hold. For visible subject motion, declare `subject_motion` and plan the semantic poses before generating assets:
+
+```bash
+"$PYTHON" "$SCRIPT" plan-keyframes <project-dir>/timeline.json --write
+```
+
+This writes explicit `at` times and deterministic placeholder paths. Generate those images next; the renderer is downstream of this motion plan.
 
 ### 3. Generate continuity-aware keyframes
 
@@ -45,7 +51,7 @@ Use the available image-generation capability rather than drawing frames in Pyth
 5. Inspect every image. Regenerate identity drift, accidental text, malformed anatomy, or discontinuous geometry before rendering.
 6. Save files at the exact paths recorded in `timeline.json`.
 
-Keep adjacent optical-flow keyframes close in composition. For articulated motion, put distinct pose images in `intermediate_images`; RIFE cannot invent a footstep when the supplied poses keep the same leg configuration. As a rule of thumb, insert another keyframe every 1-2 seconds for articulated motion and every 2-3 seconds for slow camera or atmospheric motion.
+Keep adjacent optical-flow keyframes close in composition. For articulated motion, put distinct pose images at explicit `at` times in `intermediate_images`; RIFE cannot invent a footstep when supplied poses keep the same leg configuration. Default to at most 0.25 seconds between semantic poses for walking, running, hands, or other articulated action. Use up to 1 second for slow subject motion. Camera-only or atmospheric motion may use `subject_motion: "none"`. If validation reports a motion-gap warning, rerun `plan-keyframes --write` and generate every missing pose before rendering.
 
 ### 4. Choose interpolation deliberately
 
