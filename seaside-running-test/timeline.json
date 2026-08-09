@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "title": "Seaside running test",
+  "fps": 24,
+  "width": 1280,
+  "height": 720,
+  "shots": [
+    {
+      "id": "shot-001",
+      "duration": 1.5,
+      "start_image": "keyframes/shot-001-start.png",
+      "end_image": "keyframes/shot-001-end.png",
+      "interpolation": "optical-flow",
+      "motion": "static",
+      "transition_to_next": {
+        "type": "cut",
+        "duration": 0
+      },
+      "prompt": "Same runner advances from the left third to the center of the beach frame, moving left to right through the next running phase",
+      "continuity": "Exactly one same adult runner, same face, hair, body, white sleeveless top, navy shorts, coral-red shoes, fixed eye-level 50 mm camera, same shoreline, horizon, early-morning light, color grade and 16:9 frame"
+    },
+    {
+      "id": "shot-002",
+      "duration": 1.5,
+      "start_image": "keyframes/shot-002-start.png",
+      "end_image": "keyframes/shot-002-end.png",
+      "interpolation": "optical-flow",
+      "motion": "static",
+      "transition_to_next": {
+        "type": "cut",
+        "duration": 0
+      },
+      "prompt": "Same runner advances from the center to the right side of the beach frame, moving left to right through the following running phase",
+      "continuity": "Exactly one same adult runner, same face, hair, body, white sleeveless top, navy shorts, coral-red shoes, fixed eye-level 50 mm camera, same shoreline, horizon, early-morning light, color grade and 16:9 frame"
+    }
+  ]
+}
