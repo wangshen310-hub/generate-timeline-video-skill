@@ -18,6 +18,7 @@ This Codex skill turns a written timeline into a reproducible MP4 by generating 
 
 - `generate-timeline-video/`：Codex Skill 和无第三方 Python 依赖的渲染器。
 - `seaside-running-test/`：海边跑步测试的时间线、关键帧和 24 fps 成片。
+- `seaside-running-motion-test/`: a reproducible motion-positive demo with distinct stride keyframes.
 
 ## 依赖
 
@@ -136,3 +137,9 @@ manifest on every push and pull request.
 ## License
 
 [MIT](LICENSE)
+
+## Motion-positive demo
+
+The fixed `seaside-running-test/` input is intentionally sparse for renderer regression. Use [`seaside-running-motion-test/`](seaside-running-motion-test/README.md) when evaluating articulated motion: each shot includes a distinct stride pose in `intermediate_images`, so RIFE has real foot-contact changes to interpolate.
+
+The renderer now warns when adjacent optical-flow or RIFE keyframes are byte-identical, because interpolation cannot invent motion between duplicate poses.

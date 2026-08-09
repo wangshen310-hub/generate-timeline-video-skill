@@ -201,12 +201,6 @@ class TimelineVideoTests(unittest.TestCase):
             executable.write_bytes(b"exe")
             executable.chmod(0o755)
             good_model = root / "rife-v4.6"
-    def test_distribute_intervals_keeps_final_open_interval(self) -> None:
-        self.assertEqual(timeline_video.distribute_intervals(4, 2), [2, 2])
-        self.assertEqual(timeline_video.distribute_intervals(5, 2, last_minimum=2), [2, 3])
-        with self.assertRaises(timeline_video.TimelineError):
-            timeline_video.distribute_intervals(2, 2, last_minimum=2)
-
             good_model.mkdir()
             for filename in ("flownet.param", "flownet.bin"):
                 (good_model / filename).write_bytes(b"model")
@@ -222,6 +216,12 @@ class TimelineVideoTests(unittest.TestCase):
             incomplete_model.mkdir()
             with self.assertRaisesRegex(timeline_video.TimelineError, "incomplete"):
                 timeline_video.resolve_rife_runtime(executable, incomplete_model)
+
+    def test_distribute_intervals_keeps_final_open_interval(self) -> None:
+        self.assertEqual(timeline_video.distribute_intervals(4, 2), [2, 2])
+        self.assertEqual(timeline_video.distribute_intervals(5, 2, last_minimum=2), [2, 3])
+        with self.assertRaises(timeline_video.TimelineError):
+            timeline_video.distribute_intervals(2, 2, last_minimum=2)
 
     def test_rife_missing_runtime_falls_back_unless_strict(self) -> None:
         data = {"width": 64, "height": 64, "fps": 4}
@@ -351,7 +351,6 @@ class TimelineVideoTests(unittest.TestCase):
         self.assertAlmostEqual(comparison["temporal_luma_jerk_p95_delta"], -0.5)
 
 
-if __name__ == "__main__":
     def test_intermediate_keyframes_are_accepted_for_articulated_motion(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)
@@ -382,4 +381,46 @@ if __name__ == "__main__":
             self.assertEqual(data["shots"][0]["intermediate_images"], ["mid.png"])
             self.assertFalse(any("only two keyframes" in warning for warning in warnings))
 
+
+    def test_duplicate_motion_keyframes_warn_that_interpolation_cannot_invent_motion(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            for filename in ("start.png", "mid.png", "end.png"):
+                (root / filename).write_bytes(b"same-pose")
+            manifest = root / "timeline.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "title": "Duplicate pose test",
+                        "fps": 24,
+                        "width": 64,
+                        "height": 64,
+                        "shots": [
+                            {
+                                "id": "shot-001",
+                                "duration": 0.5,
+                                "start_image": "start.png",
+                                "intermediate_images": ["mid.png"],
+                                "end_image": "end.png",
+                                "interpolation": "rife",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            _, warnings = timeline_video.load_and_validate(
+                manifest,
+                require_files=True,
+                probe_files=False,
+            )
+            duplicate_warnings = [
+                warning for warning in warnings if "cannot create new motion" in warning
+            ]
+            self.assertEqual(len(duplicate_warnings), 2)
+
+
+
+if __name__ == "__main__":
     unittest.main()

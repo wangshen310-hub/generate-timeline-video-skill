@@ -65,6 +65,7 @@ Camera motion presets are `static`, `zoom-in`, `zoom-out`, `pan-left`, `pan-righ
 ```
 
 Resolve every reported error. Treat frame-rounding notices as intentional only after checking timing. The renderer rounds each duration to the nearest whole frame.
+Treat a warning that adjacent optical-flow/RIFE keyframes are byte-identical as an input defect: add a distinct pose or choose `hold`; interpolation cannot create the missing motion. Use `seaside-running-motion-test/` as the repository's motion-positive reference.
 
 ### 6. Render and verify
 

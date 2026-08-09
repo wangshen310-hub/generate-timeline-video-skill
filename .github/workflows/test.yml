@@ -22,3 +22,5 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Validate demo manifest
         run: python generate-timeline-video/scripts/timeline_video.py validate seaside-running-test/timeline.json
+      - name: Validate motion-positive demo manifest
+        run: python generate-timeline-video/scripts/timeline_video.py validate seaside-running-motion-test/timeline.json
