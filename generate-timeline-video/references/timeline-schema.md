@@ -107,6 +107,7 @@ When a subject changes pose, put every materially different pose in
 across each adjacent pair, removes repeated pair boundaries, and preserves the
 declared total frame count. Interpolation cannot invent an unseen footstep from
 two keyframes that have the same leg pose.
+For optical-flow and RIFE shots, validation also warns when adjacent keyframe files are byte-identical. Treat that warning as a missing-motion input defect, not as a renderer-quality problem. The reproducible [`seaside-running-motion-test`](../../seaside-running-motion-test/README.md) shows the expected layout.
 
 The final frame of one image pair is normally the intended end keyframe.
 Optical-flow works best when both images preserve subject count, topology,

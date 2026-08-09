@@ -321,6 +321,20 @@ def load_and_validate(
             elif path.is_file():
                 expect_stream(path, "video")
 
+        keyframe_paths: list[tuple[str, Path]] = []
+        if isinstance(start_image, str) and start_image.strip():
+            keyframe_paths.append(("start_image", resolve_media(base, start_image)))
+        for keyframe_index, value in enumerate(intermediate_images):
+            if isinstance(value, str) and value.strip():
+                keyframe_paths.append(
+                    (
+                        f"intermediate_images[{keyframe_index}]",
+                        resolve_media(base, value),
+                    )
+                )
+        if isinstance(end_image, str) and end_image.strip():
+            keyframe_paths.append(("end_image", resolve_media(base, end_image)))
+
         interpolation = interpolation_for(shot)
         if interpolation not in INTERPOLATIONS:
             errors.append(f"{prefix}.interpolation must be one of {sorted(INTERPOLATIONS)}")
@@ -340,6 +354,18 @@ def load_and_validate(
                 f"{prefix} spans {float(duration):.3f}s with only two keyframes; "
                 "large or articulated motion needs intermediate_images with distinct poses; add additional keyframes"
             )
+
+        if interpolation in {"optical-flow", "rife"}:
+            for (first_label, first_path), (second_label, second_path) in zip(
+                keyframe_paths, keyframe_paths[1:]
+            ):
+                if first_path.is_file() and second_path.is_file() and media_files_match(
+                    first_path, second_path
+                ):
+                    warnings.append(
+                        f"{prefix} {first_label} and {second_label} are byte-identical; "
+                        "interpolation cannot create new motion between them"
+                    )
 
         optical_flow_profile = optical_flow_profile_for(shot)
         if optical_flow_profile not in OPTICAL_FLOW_PROFILES:

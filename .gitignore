@@ -5,3 +5,4 @@ __pycache__/
 # Local render diagnostics and temporary work files
 seaside-running-test/output/qa/
 timeline-video-*/
+seaside-running-motion-test/output/

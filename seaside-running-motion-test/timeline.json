@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "title": "Seaside running motion test",
+  "fps": 24,
+  "width": 1280,
+  "height": 720,
+  "shots": [
+    {
+      "id": "shot-001",
+      "duration": 1.5,
+      "start_image": "keyframes/shot-001-start.png",
+      "intermediate_images": ["keyframes/shot-001-mid.png"],
+      "end_image": "keyframes/shot-001-end.png",
+      "interpolation": "rife",
+      "motion": "static",
+      "transition_to_next": {"type": "cut", "duration": 0},
+      "prompt": "The same runner advances from the left third to the center with a distinct stride phase at the intermediate keyframe.",
+      "continuity": "One adult runner, white sleeveless top, navy shorts, coral shoes, fixed beach camera, stable shoreline and lighting."
+    },
+    {
+      "id": "shot-002",
+      "duration": 1.5,
+      "start_image": "keyframes/shot-002-start.png",
+      "intermediate_images": ["keyframes/shot-002-mid.png"],
+      "end_image": "keyframes/shot-002-end.png",
+      "interpolation": "rife",
+      "motion": "static",
+      "transition_to_next": {"type": "cut", "duration": 0},
+      "prompt": "The same runner advances from the center to the right through the following stride phase.",
+      "continuity": "One adult runner, white sleeveless top, navy shorts, coral shoes, fixed beach camera, stable shoreline and lighting."
+    }
+  ]
+}
