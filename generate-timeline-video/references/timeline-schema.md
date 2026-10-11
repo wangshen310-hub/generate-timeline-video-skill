@@ -152,4 +152,6 @@ Build each prompt in this order:
 [target aspect ratio; no captions, watermark, border, or UI]
 ```
 
+For character action, describe coupled body, expression and secondary-motion states at each planned time. Keep changing eye openness, gaze, ear bend and tail position out of the invariant `continuity` block. Store per-keyframe instructions in a project prompt record when the shot-level `prompt` is too coarse. These are generation instructions, not new renderer fields; `plan-keyframes` schedules slots but does not infer their semantic actions. Read [character-motion.md](character-motion.md) for the puppy example and visual acceptance checks.
+
 For a recurring subject, use an image edit/reference workflow and ask for only the stated change. If the requested change is too large for reliable interpolation, split it into additional shots or keyframe pairs.

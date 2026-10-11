@@ -40,6 +40,8 @@ Translate the request into contiguous shots. Give each shot one visual purpose a
 
 This writes explicit `at` times and deterministic placeholder paths. Generate those images next; the renderer is downstream of this motion plan.
 
+For character or animal action, read [references/character-motion.md](references/character-motion.md) before generating keyframes. Plan visible whole-body action together with relevant expression and secondary motion: eyes/gaze, head, ears, tail, and clothing when present. Record their timed states in the shot's `prompt` or a project prompt record; `plan-keyframes` creates time slots, not these action decisions. Keep identity and scene invariants in `continuity`, and changing expression or appendage states in the per-keyframe instructions. Choose purposeful changes and intentional stillness for this shot rather than moving every feature constantly.
+
 Planning checks the frame budget before writing. Increase duration/fps or relax the gap if the requested semantic poses cannot fit. Repeated planning preserves full time precision and is idempotent; generated paths avoid existing assets and referenced names.
 
 ### 3. Generate continuity-aware keyframes
@@ -52,6 +54,8 @@ Use the available image-generation capability rather than drawing frames in Pyth
 4. Ask for clean full-frame imagery without captions, watermarks, borders, or UI unless those are intentional.
 5. Inspect every image. Regenerate identity drift, accidental text, malformed anatomy, or discontinuous geometry before rendering.
 6. Save files at the exact paths recorded in `timeline.json`.
+
+Check each keyframe against its timed motion plan, including visible eyes, ears, tail, head, limb contacts, and silhouette as applicable. A new paw pose alone is insufficient when the requested performance also needs expression or secondary motion. Keep those features in frame, and regenerate missing or inconsistent changes before interpolation. Add timed images at short events such as eye closure/reopening or an ear/tail reversal when the existing slots would miss them; the 0.25-second default is a maximum gap, not a guarantee of adequate event sampling.
 
 Keep adjacent optical-flow keyframes close in composition. For articulated motion, put distinct pose images at explicit `at` times in `intermediate_images`; RIFE cannot invent a footstep when supplied poses keep the same leg configuration. Default to at most 0.25 seconds between semantic poses for walking, running, hands, or other articulated action. Use up to 1 second for slow subject motion. Camera-only or atmospheric motion may use `subject_motion: "none"`. If validation reports a motion-gap warning, rerun `plan-keyframes --write` and generate every missing pose before rendering.
 
@@ -91,6 +95,8 @@ The renderer reports the actual backend, RIFE strategy, and optical-flow profile
 Use an `.mp4` output path. Publication follows geometry, frame count/rate, video/container duration, audio and full-decode checks. Without `--force`, publication refuses an output created by another process during rendering. JSON results are on stdout and progress/command logs are on stderr. Image normalization is cached only within a render; pure cuts use stream-copy while transitions require encoding.
 
 Inspect at least the first, middle, and last frame of every shot plus every transition. Confirm subject continuity, chronology, aspect ratio, exact fps, total frame count, audio sync, and that shared cut boundaries do not freeze. If an interpolation artifact appears, add a keyframe, change only that shot's backend/profile, or switch it to `blend`; do not lower QA thresholds to preserve a first render.
+
+For character action, also inspect frames around the planned expression and secondary-motion events, plus interpolated frames between poses. Compare face/appendage crops and the full frame: a metrics pass does not prove blinking, ear rebound, tail movement, or stable paws. If a feature never changes in the inputs, fix the keyframe plan rather than expecting interpolation to invent its action. If a clean hold/cut animatic is the best available result, disclose the pose-update rate separately from encoded fps and state that it has no synthesized in-between frames.
 
 ## Preserve reproducibility
 
