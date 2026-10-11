@@ -2314,6 +2314,7 @@ def command_inspect(args: argparse.Namespace) -> int:
               "normal_speed_playback": "not_reviewed", "issues": []}
     write_json_atomic(directory / "review.json", review)
     report = {"status": "ready_for_visual_review", "technical": "passed", "review": review,
+              "video_sha256": file_digest(directory / "preview.mp4").hex(),
               "keyframe_timing": timing, "pairs": pairs, "sample_frames": ordered,
               "benchmark": benchmark, "warnings": warnings}
     write_json_atomic(directory / "report.json", report)
@@ -2332,13 +2333,56 @@ def command_inspect(args: argparse.Namespace) -> int:
             '<video id="preview" src="preview.mp4" controls></video><p>Playback speed '
             '<select onchange="document.getElementById(\'preview\').playbackRate=Number(this.value)">'
             '<option value="1">1×</option><option value="0.5">0.5×</option><option value="0.25">0.25×</option></select></p>'
-            '<p>Record source-pair, intermediate-frame and playback findings separately in review.json, with frame numbers and remedies.</p>'
+            '<p>Record source-pair, intermediate-frame and playback findings separately in review.json as not_reviewed/pass/revise, '
+            'with frame numbers, remedies and resolved flags for issues. Run review-status before delivery.</p>'
             f'<h2>Source images</h2><div class="grid">{source_html}</div><h2>Adjacent pairs</h2><ol>{pair_html}</ol>'
             f'<h2>Rendered samples</h2><div class="grid">{frame_html}</div>')
     (directory / "index.html").write_text(page, encoding="utf-8")
     print(json.dumps({"status": report["status"], "report": str(directory / "report.json"),
                       "preview": str(directory / "index.html")}, indent=2))
     return 0
+
+
+def assess_review(report: dict[str, Any], review: dict[str, Any], digest: str) -> dict[str, Any]:
+    pending, revisions = [], []
+    if report.get("technical") != "passed":
+        pending.append("technical checks have not passed")
+    if report.get("video_sha256") != digest:
+        pending.append("video differs from the inspected copy or inspection hash is missing; rerun inspect")
+    for field in ("source_pairs", "intermediate_frames", "normal_speed_playback"):
+        value = review.get(field)
+        if value == "revise":
+            revisions.append(f"{field} requires revision")
+        elif value != "pass":
+            pending.append(f"{field} is {value!r}; explicit pass/revise is required after review")
+    issues = review.get("issues")
+    if not isinstance(issues, list):
+        pending.append("issues must be an array")
+    else:
+        for index, issue in enumerate(issues):
+            if not isinstance(issue, dict) or issue.get("resolved") is not True:
+                revisions.append(f"issue {index + 1} remains unresolved")
+    status = "needs_revision" if revisions else "needs_review" if pending else "ready_for_delivery"
+    return {"delivery_status": status, "reasons": revisions + pending,
+            "basis": "Recorded human/agent review of the inspected video; not automated visual certification"}
+
+
+def command_review_status(args: argparse.Namespace) -> int:
+    directory = args.directory.expanduser().resolve()
+    try:
+        report = json.loads((directory / "report.json").read_text(encoding="utf-8"))
+        review = json.loads((directory / "review.json").read_text(encoding="utf-8"))
+        digest = file_digest(directory / "preview.mp4").hex()
+    except (OSError, ValueError) as exc:
+        raise TimelineError(f"Cannot read inspection/review files: {exc}") from exc
+    if not isinstance(report, dict) or not isinstance(review, dict):
+        raise TimelineError("report.json and review.json must contain objects")
+    result = assess_review(report, review, digest)
+    if args.write:
+        report.update(result, review=review)
+        write_json_atomic(directory / "report.json", report)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["delivery_status"] == "ready_for_delivery" else 2
 
 
 def command_render(args: argparse.Namespace) -> int:
@@ -2666,6 +2710,11 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--output-dir", type=Path, required=True)
     inspect_parser.add_argument("--interpolation", choices=sorted(INTERPOLATIONS), help="Match an interpolation override used for rendering")
     inspect_parser.set_defaults(handler=command_inspect)
+
+    review_parser = subparsers.add_parser("review-status", help="Check recorded acceptance and inspected video identity before delivery")
+    review_parser.add_argument("directory", type=Path)
+    review_parser.add_argument("--write", action="store_true", help="Record delivery status and review in report.json")
+    review_parser.set_defaults(handler=command_review_status)
 
     benchmark_parser = subparsers.add_parser(
         "benchmark",

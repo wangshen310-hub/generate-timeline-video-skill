@@ -37,6 +37,8 @@ This Codex skill turns a written timeline into a reproducible MP4 by generating 
 - `plan-motion timeline.json --write` 生成可编辑的动作计划，记录变化对象、状态、保持项、参考图和人工检查状态，适用于角色及非角色内容。
 - `render ... --cache-dir .timeline-cache --command-timeout 300` 保留已验证的片段，按图片、参数、工具和模型内容失效；中断后可复用已完成片段。
 - `inspect final.mp4 --manifest timeline.json --output-dir review-001` 生成相邻图片对照、带帧号的成片抽样、异常位置和本地播放页。检查结果默认待审，不把技术通过当作视觉通过。
+- `review-status review-001 --write` 核对检查记录、未解决问题和受检视频哈希。播放未检查或存在问题时只能交付待审预览；该命令不代替视觉判断。
+- 连续动作先规划阶段、方向和速度变化，快速形变先试验最难区间。不能为了避开插帧困难而擅自加入静止或切镜，也不能把固定关键帧间隔当作流畅度保证。
 
 缓存是可丢弃的临时资产，不应放在源素材目录。真实 RIFE 运行时仍需单独提供；CI 使用可控的运动边缘推理替身验证时间采样和实际编码结果，不能代替真实模型的视觉质检。
 

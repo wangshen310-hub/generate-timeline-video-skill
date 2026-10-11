@@ -27,7 +27,7 @@ Do not demand unchanged lighting or geometry when their transformation is the pu
 
 Inspect several in-between frames from each pair and frames immediately before/after keyframe joins and shot transitions. Review the entire clip at normal speed when a player is available; replay suspect intervals slowly. Check trajectories, rhythm, accidental freezes, sudden speed/direction or scale changes, flicker, ghost edges, unstable text and background wobble. For camera motion, follow the horizon and object paths to detect movement restarting at a keyframe join.
 
-Intentional holds, anticipation, cuts and abrupt graphic transitions are valid. Assess them against the intended timing and narrative. Check the last-to-first boundary only when a repeating loop is requested; matching endpoint images alone does not prove seamless playback.
+Intentional holds, anticipation, cuts and abrupt graphic transitions are valid when they serve the requested scene and its recorded plan. Do not retroactively call a freeze/cut intentional to excuse broken continuous action. Check the last-to-first boundary only when a repeating loop is requested; matching endpoint images alone does not prove seamless playback.
 
 Record suspect frame/time locations and their source pairs. Fix incompatible source images, missing motion states or timing first; compare interpolation backends when correspondence causes artifacts. Re-render and inspect the affected interval and its neighbors. Technical probe/decode and temporal metrics complement visual review. If only frame samples were inspected, disclose that normal-speed playback was not verified and avoid claiming natural or smooth motion solely from those samples.
 
@@ -38,3 +38,11 @@ Run `inspect final.mp4 --manifest timeline.json --output-dir review-001` using t
 If rendering used an `--interpolation` override, pass the same override to `inspect`. In particular, `--interpolation hold` ignores unused intermediate/end images during both rendering and inspection.
 
 Inspect the page, then record source-pair, intermediate-frame and normal-speed outcomes separately in `review.json`, including issue frame/time, source pair and remedy. Static samples and metrics never automatically promote visual status to passed. Generated PNG samples are full-frame; use additional detail crops for suspected local defects. Re-run inspection into a new directory after repairing the affected source or render. The HTML page is a local review aid, not a claim that playback has been observed.
+
+## Delivery status
+
+For the three review fields use only `not_reviewed`, `pass` or `revise`. The value `reviewed` describes activity but does not establish acceptance. Each issue should include its frame/time, description, remedy and `resolved: false`; mark it true only after checking the repair. Keep playback `not_reviewed` if a player could not be observed. Do not infer it from successful decoding, a page opening, frame samples or smooth-looking source images.
+
+Run `review-status review-001 --write`. It checks the recorded outcomes, unresolved issues and the SHA256 of the inspection's `preview.mp4`, and updates `report.json`. Exit 0 means `ready_for_delivery`; exit 2 means `needs_review` or `needs_revision`. A replaced video or older report without a hash needs fresh inspection. This checks records and file identity, not the truth of a subjective judgment.
+
+Deliver unreviewed playback as a **review preview** with the missing check stated, even when the MP4 is technically valid. Known unresolved motion defects require revision rather than a completed-animation claim. An explicitly requested draft or still animatic can still be delivered under that requested scope; do not claim smooth continuous animation for it.
