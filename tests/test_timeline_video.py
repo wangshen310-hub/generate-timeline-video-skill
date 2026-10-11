@@ -73,8 +73,8 @@ class TimelineVideoTests(unittest.TestCase):
             )
 
         graph = commands[0][commands[0].index("-filter_complex") + 1]
-        self.assertIn("N/4", graph)
-        self.assertNotIn("N/3", graph)
+        self.assertIn("(N-1)/4", graph)
+        self.assertNotIn("(N-1)/3", graph)
 
     def test_optical_flow_input_rate_respects_endpoint_mode(self) -> None:
         commands: list[list[str]] = []

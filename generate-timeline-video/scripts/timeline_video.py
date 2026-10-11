@@ -7,6 +7,8 @@ Requires ffmpeg and ffprobe. Uses only Python's standard library.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import json
 import math
@@ -85,13 +87,13 @@ def run(
     capture: bool = False,
     cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    print(f"+ {shlex.join(command)}")
+    eprint(f"+ {shlex.join(command)}")
     return subprocess.run(
         command,
         check=True,
         text=True,
         cwd=cwd,
-        stdout=subprocess.PIPE if capture else None,
+        stdout=subprocess.PIPE if capture else sys.stderr,
         stderr=subprocess.PIPE if capture else None,
     )
 
@@ -271,6 +273,7 @@ def load_and_validate(
     *,
     require_files: bool = True,
     probe_files: bool = False,
+    interpolation_override: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     manifest_path = manifest_path.expanduser().resolve()
     if not manifest_path.is_file():
@@ -287,7 +290,7 @@ def load_and_validate(
     errors: list[str] = []
     warnings: list[str] = []
 
-    if data.get("version") != SCHEMA_VERSION:
+    if type(data.get("version")) is not int or data.get("version") != SCHEMA_VERSION:
         errors.append(f"version must be {SCHEMA_VERSION}")
     if not isinstance(data.get("title"), str) or not data["title"].strip():
         errors.append("title must be a non-empty string")
@@ -355,7 +358,8 @@ def load_and_validate(
             elif path.is_file():
                 expect_stream(path, "video")
 
-        end_image = shot.get("end_image")
+        interpolation = interpolation_override or interpolation_for(shot)
+        end_image = shot.get("end_image") if interpolation != "hold" else None
         if end_image is not None and (not isinstance(end_image, str) or not end_image.strip()):
             errors.append(f"{prefix}.end_image must be a non-empty path when present")
         elif isinstance(end_image, str):
@@ -364,7 +368,7 @@ def load_and_validate(
                 errors.append(f"{prefix}.end_image does not exist: {path}")
             elif path.is_file():
                 expect_stream(path, "video")
-        intermediate_images = shot.get("intermediate_images", [])
+        intermediate_images = shot.get("intermediate_images", []) if interpolation != "hold" else []
         intermediate_valid = True
         intermediate_formats: set[str] = set()
         timed_intermediate_times: list[float] = []
@@ -433,14 +437,13 @@ def load_and_validate(
         if isinstance(end_image, str) and end_image.strip():
             keyframe_paths.append(("end_image", resolve_media(base, end_image)))
 
-        interpolation = interpolation_for(shot)
         if interpolation not in INTERPOLATIONS:
             errors.append(f"{prefix}.interpolation must be one of {sorted(INTERPOLATIONS)}")
         elif interpolation != "hold" and not isinstance(end_image, str):
             errors.append(f"{prefix}.end_image is required for {interpolation}")
-        elif interpolation == "hold" and intermediate_images:
+        elif interpolation == "hold" and shot.get("intermediate_images"):
             warnings.append(f"{prefix}.intermediate_images is ignored because interpolation is hold")
-        elif interpolation == "hold" and isinstance(end_image, str):
+        elif interpolation == "hold" and shot.get("end_image"):
             warnings.append(f"{prefix}.end_image is ignored because interpolation is hold")
         elif (
             interpolation in {"optical-flow", "rife"}
@@ -454,6 +457,10 @@ def load_and_validate(
                 f"{prefix} spans {float(duration):.3f}s with only two keyframes; "
                 "large or articulated motion needs intermediate_images with distinct poses; add additional keyframes"
             )
+
+        if interpolation != "hold" and intermediate_valid and intermediate_images:
+            if len(intermediate_images) + 2 > frames:
+                errors.append(f"{prefix} keyframes exceed the frame budget ({frames} frames)")
 
         if interpolation in {"optical-flow", "rife"}:
             for (first_label, first_path), (second_label, second_path) in zip(
@@ -687,7 +694,43 @@ def encoding_args(preset: str, crf: int) -> list[str]:
     ]
 
 
+_image_cache: ContextVar[tuple[Path, dict] | None] = ContextVar("image_cache", default=None)
+
+
+@contextmanager
+def normalization_cache(directory: Path):
+    """Scope cached normalized images to exactly one render, including fallbacks."""
+    directory.mkdir()
+    token = _image_cache.set((directory, {}))
+    try:
+        yield
+    finally:
+        _image_cache.reset(token)
+
+
+def link_or_copy(source: Path, target: Path) -> None:
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copyfile(source, target)
+
+
 def normalize_image(ffmpeg: str, source: Path, target: Path, width: int, height: int) -> None:
+    cache = _image_cache.get()
+    if cache is not None:
+        directory, images = cache
+        key = (source.resolve(), width, height)
+        if key not in images:
+            cached = directory / f"image-{len(images):06d}.png"
+            # The uncached operation cannot recursively enter the cache.
+            token = _image_cache.set(None)
+            try:
+                normalize_image(ffmpeg, source, cached, width, height)
+            finally:
+                _image_cache.reset(token)
+            images[key] = cached
+        link_or_copy(images[key], target)
+        return
     run(
         [
             ffmpeg,
@@ -766,7 +809,7 @@ def render_blend(
     graph = (
         f"[0:v]{first},fps={fps},trim=end_frame={frames},setpts=PTS-STARTPTS[a];"
         f"[1:v]{second},fps={fps},trim=end_frame={frames},setpts=PTS-STARTPTS[b];"
-        f"[a][b]blend=all_expr='A*(1-N/{denominator})+B*N/{denominator}':shortest=1,"
+        f"[a][b]blend=all_expr='A*(1-(N-1)/{denominator})+B*(N-1)/{denominator}':shortest=1,"
         "format=yuv420p[out]"
     )
     run(
@@ -826,7 +869,7 @@ def render_optical_flow(
     third = pair_dir / "frame000002.png"
     normalize_image(ffmpeg, start_image, first, width, height)
     normalize_image(ffmpeg, end_image, second, width, height)
-    shutil.copyfile(second, third)
+    link_or_copy(second, third)
 
     denominator = max(frames - 1 if include_endpoint else frames, 1)
     input_rate = f"{fps}/{denominator}"
@@ -973,11 +1016,11 @@ def render_rife(
     denominator = max(frames - 1 if include_endpoint else frames, 1)
     temporal_filter: str | None = None
     if strategy == "direct":
-        shutil.copyfile(first, sequence / "frame000000.png")
+        link_or_copy(first, sequence / "frame000000.png")
         for index in range(1, frames):
             target = sequence / f"frame{index:06d}.png"
             if include_endpoint and index == frames - 1:
-                shutil.copyfile(second, target)
+                link_or_copy(second, target)
                 continue
             run(
                 rife_command(
@@ -996,8 +1039,8 @@ def render_rife(
         intervals = recursive_interval_count(denominator)
         first_frame = sequence / "frame000000.png"
         last_frame = sequence / f"frame{intervals:06d}.png"
-        shutil.copyfile(first, first_frame)
-        shutil.copyfile(second, last_frame)
+        link_or_copy(first, first_frame)
+        link_or_copy(second, last_frame)
 
         def fill_midpoints(
             left_index: int,
@@ -1025,7 +1068,7 @@ def render_rife(
             fill_midpoints(middle_index, right_index, middle_frame, right_frame)
 
         fill_midpoints(0, intervals, first_frame, last_frame)
-        shutil.copyfile(second, sequence / f"frame{intervals + 1:06d}.png")
+        link_or_copy(second, sequence / f"frame{intervals + 1:06d}.png")
         input_rate = f"{fps * intervals}/{denominator}"
         temporal_filter = f"framerate=fps={fps}:scene=100"
 
@@ -1252,6 +1295,7 @@ def concat_keyframe_segments(
     frames: int,
     preset: str,
     crf: int,
+    motion: str = "static",
 ) -> None:
     if len(clips) == 1:
         shutil.copyfile(clips[0], output)
@@ -1270,7 +1314,7 @@ def concat_keyframe_segments(
         )
     labels = "".join(f"[v{index}]" for index in range(len(clips)))
     filters.append(f"{labels}concat=n={len(clips)}:v=1:a=0[joined]")
-    filters.append(f"[joined]fps={fps},format=yuv420p[out]")
+    filters.append(f"[joined]{motion_filter(motion, width, height, frames, fps, normalized=True)},fps={fps},format=yuv420p[out]")
     command.extend(
         [
             "-filter_complex",
@@ -1343,6 +1387,7 @@ def render_shot_keyframes(
                 "end_image": image_values[index + 1],
                 "duration": segment_frames / fps,
                 "intermediate_images": [],
+                "motion": "static",
             }
         )
         clip = work_dir / f"{output.stem}-segment-{index + 1:03d}.mp4"
@@ -1377,6 +1422,7 @@ def render_shot_keyframes(
         frames=frames,
         preset=preset,
         crf=crf,
+        motion=motion_for(shot),
     )
     unique_methods = list(dict.fromkeys(methods))
     return "+".join(unique_methods) + f"+{len(image_values)}-keyframes"
@@ -1400,7 +1446,7 @@ def render_shot(
     preset: str,
     crf: int,
 ) -> str:
-    if intermediate_images_for(shot):
+    if (interpolation_override or interpolation_for(shot)) != "hold" and intermediate_images_for(shot):
         return render_shot_keyframes(
             data,
             shot,
@@ -1454,6 +1500,19 @@ def assemble_shots(
 
     if len(clips) == 1:
         shutil.copyfile(clips[0], output)
+        return expected_frames
+
+    if all(transition_for(shot)[0] == "cut" for shot in shots[:-1]):
+        # All clips are produced with the same codec, geometry and time base.
+        listing = output.with_suffix(".ffconcat")
+        lines = ["ffconcat version 1.0"]
+        for clip in clips:
+            escaped = clip.resolve().as_posix().replace("'", "'\\''")
+            lines.append(f"file '{escaped}'")
+        listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "concat",
+             "-safe", "0", "-i", str(listing), "-map", "0:v:0", "-c:v", "copy",
+             "-an", "-movflags", "+faststart", str(output)])
         return expected_frames
 
     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
@@ -1814,29 +1873,52 @@ def plan_shot_keyframes(
     shot: dict[str, Any],
     manifest_dir: Path,
     max_gap: float,
+    fps: int | None = None,
+    reserved_paths: set[Path] | None = None,
 ) -> list[dict[str, Any]]:
     """Return existing and missing keyframes at a bounded temporal spacing."""
     if max_gap <= 0 or not math.isfinite(max_gap):
         raise TimelineError("max-gap must be a positive finite number")
     sequence = keyframe_sequence_for(shot)
     planned: list[dict[str, Any]] = []
+    used_paths = {resolve_media(manifest_dir, image) for image, _ in sequence} | (reserved_paths or set())
+    subdivisions_by_pair = []
+    budget = frame_count(float(shot["duration"]), fps) if fps is not None else None
+    for (_, left_at), (_, right_at) in zip(sequence, sequence[1:]):
+        ratio = (right_at - left_at) / max_gap
+        if not math.isfinite(ratio) or (budget is not None and ratio > budget):
+            raise TimelineError(f"Shot {shot['id']} planned keyframes exceed the frame budget; increase duration/fps or max-gap")
+        subdivisions_by_pair.append(max(1, math.ceil(ratio - 1e-9)))
+    if fps is not None and sum(subdivisions_by_pair) + 1 > frame_count(float(shot["duration"]), fps):
+        raise TimelineError(f"Shot {shot['id']} planned keyframes exceed the frame budget; increase duration/fps or max-gap")
 
     def entry(image: str, at: float, generated: bool) -> dict[str, Any]:
         path = resolve_media(manifest_dir, image)
-        planned_name = f"{shot['id']}-dense-{round(at * 1000):06d}ms.png"
+        planned_stem = f"{shot['id']}-dense-{round(at * 1000):06d}ms"
+        suffix = hashlib.sha256(float(at).hex().encode()).hexdigest()[:12]
+        generated_name = re.fullmatch(re.escape(planned_stem) + rf"(?:-{suffix}(?:-[0-9]+)?)?\.png", Path(image).name)
         return {
             "image": image,
-            "at": round(at, 6),
+            "at": at,
             "status": "existing" if path.is_file() else "missing",
-            "generated_slot": generated or Path(image).name == planned_name,
+            "generated_slot": generated or generated_name is not None,
         }
 
     planned.append(entry(sequence[0][0], sequence[0][1], False))
-    for (left_image, left_at), (right_image, right_at) in zip(sequence, sequence[1:]):
-        subdivisions = max(1, math.ceil((right_at - left_at) / max_gap - 1e-12))
+    for ((left_image, left_at), (right_image, right_at)), subdivisions in zip(
+        zip(sequence, sequence[1:]), subdivisions_by_pair
+    ):
         for step in range(1, subdivisions):
             at = left_at + (right_at - left_at) * step / subdivisions
             image = f"keyframes/{shot['id']}-dense-{round(at * 1000):06d}ms.png"
+            if resolve_media(manifest_dir, image) in used_paths or resolve_media(manifest_dir, image).exists():
+                suffix = hashlib.sha256(float(at).hex().encode()).hexdigest()[:12]
+                image = f"keyframes/{shot['id']}-dense-{round(at * 1000):06d}ms-{suffix}.png"
+                serial = 1
+                while resolve_media(manifest_dir, image) in used_paths or resolve_media(manifest_dir, image).exists():
+                    image = f"keyframes/{shot['id']}-dense-{round(at * 1000):06d}ms-{suffix}-{serial}.png"
+                    serial += 1
+            used_paths.add(resolve_media(manifest_dir, image))
             planned.append(entry(image, at, True))
         planned.append(entry(right_image, right_at, False))
     return planned
@@ -1872,6 +1954,7 @@ def command_plan_keyframes(args: argparse.Namespace) -> int:
 
     shot_plans: list[dict[str, Any]] = []
     changed = False
+    reserved_paths = referenced_media_paths(data, manifest_path.parent)
     for shot in data["shots"]:
         if interpolation_for(shot) == "hold" or not isinstance(shot.get("end_image"), str):
             continue
@@ -1891,7 +1974,9 @@ def command_plan_keyframes(args: argparse.Namespace) -> int:
                 {"id": shot["id"], "subject_motion": declared_motion, "status": "not-required"}
             )
             continue
-        planned = plan_shot_keyframes(shot, manifest_path.parent, float(gap_limit))
+        planned = plan_shot_keyframes(shot, manifest_path.parent, float(gap_limit),
+                                      fps=int(data["fps"]), reserved_paths=reserved_paths)
+        reserved_paths.update(resolve_media(manifest_path.parent, entry["image"]) for entry in planned)
         intermediates = [
             {"image": item["image"], "at": item["at"]}
             for item in planned[1:-1]
@@ -1969,7 +2054,8 @@ def command_validate(args: argparse.Namespace) -> int:
 def command_render(args: argparse.Namespace) -> int:
     ffmpeg = require_tool("ffmpeg")
     require_tool("ffprobe")
-    data, warnings = load_and_validate(args.manifest, require_files=True, probe_files=True)
+    data, warnings = load_and_validate(args.manifest, require_files=True, probe_files=True,
+                                       interpolation_override=args.interpolation)
     for warning in warnings:
         eprint(f"WARNING: {warning}")
 
@@ -1996,19 +2082,23 @@ def command_render(args: argparse.Namespace) -> int:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", data["title"].strip()).strip("-.") or "video"
     output = (args.output or (manifest_dir / "output" / f"{slug}.mp4")).expanduser().resolve()
     protected_inputs = referenced_media_paths(data, manifest_dir) | {manifest_path}
-    if output in protected_inputs:
+    if output in protected_inputs or (output.exists() and any(
+        source.exists() and output.samefile(source) for source in protected_inputs
+    )):
         raise TimelineError(f"Output must not replace the timeline or source media: {output}")
+    if output.suffix.lower() != ".mp4":
+        raise TimelineError("Output must have an .mp4 extension")
     if output.exists() and not args.force:
         raise TimelineError(f"Output exists; pass --force to replace it: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix=".timeline-video-", dir=output.parent) as temp_name:
+    with tempfile.TemporaryDirectory(prefix=".timeline-video-", dir=output.parent) as temp_name, normalization_cache(Path(temp_name) / "normalized"):
         work_dir = Path(temp_name)
         clips: list[Path] = []
         methods: dict[str, str] = {}
         for index, shot in enumerate(data["shots"]):
             clip = work_dir / f"shot-{index:04d}.mp4"
-            print(f"Rendering {shot['id']} ({index + 1}/{len(data['shots'])})")
+            eprint(f"Rendering {shot['id']} ({index + 1}/{len(data['shots'])})")
             methods[shot["id"]] = render_shot(
                 data,
                 shot,
@@ -2043,34 +2133,12 @@ def command_render(args: argparse.Namespace) -> int:
             mux_audio(ffmpeg, data, manifest_dir, assembled, final_temp, total_frames)
 
         probe = probe_video(final_temp)
-        streams = probe.get("streams") or []
-        stream = next((item for item in streams if item.get("codec_type") == "video"), {})
-        actual_frames = int(stream.get("nb_read_frames", -1))
-        actual_rate = rate_as_float(stream.get("avg_frame_rate", "0/1"))
-        if actual_frames != total_frames:
-            raise TimelineError(
-                f"Rendered frame count {actual_frames} does not match expected {total_frames}"
-            )
-        if abs(actual_rate - int(data["fps"])) > 1e-6:
-            raise TimelineError(
-                f"Rendered frame rate {actual_rate} does not match expected {data['fps']}"
-            )
-
-        staged_output: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                prefix=f".{output.stem}-",
-                suffix=output.suffix,
-                dir=output.parent,
-                delete=False,
-            ) as staged_file:
-                staged_output = Path(staged_file.name)
-            shutil.copy2(final_temp, staged_output)
-            staged_output.replace(output)
-            staged_output = None
-        finally:
-            if staged_output is not None:
-                staged_output.unlink(missing_ok=True)
+        failures = output_validation_failures(probe, data)
+        if failures:
+            raise TimelineError("Rendered output validation failed: " + "; ".join(failures))
+        run([ffmpeg, "-hide_banner", "-loglevel", "error", "-xerror", "-i",
+             str(final_temp), "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-"])
+        publish_video(final_temp, output, force=args.force)
 
     print(
         json.dumps(
@@ -2082,7 +2150,8 @@ def command_render(args: argparse.Namespace) -> int:
                 "duration": total_frames / data["fps"],
                 "interpolation_used": methods,
                 "intermediate_keyframes": {
-                    shot["id"]: len(intermediate_images_for(shot)) for shot in data["shots"]
+                    shot["id"]: (0 if (args.interpolation or interpolation_for(shot)) == "hold"
+                                 else len(intermediate_images_for(shot))) for shot in data["shots"]
                 },
                 "deduplicated_cut_boundaries": [
                     data["shots"][index]["id"] for index in sorted(deduplicated_boundaries)
@@ -2109,6 +2178,56 @@ def command_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def publish_video(candidate: Path, output: Path, *, force: bool) -> None:
+    """Publish a validated candidate on the same filesystem without copying it.
+
+    Hard-link creation is atomic and refuses races when overwrite is disabled.
+    """
+    if force:
+        os.replace(candidate, output)
+    else:
+        try:
+            os.link(candidate, output)
+        except FileExistsError as exc:
+            raise TimelineError(f"Output appeared during rendering: {output}") from exc
+
+
+def output_validation_failures(payload: dict[str, Any], data: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    streams = payload.get("streams") or []
+    video = next((item for item in streams if item.get("codec_type") == "video"), None)
+    if video is None:
+        return ["video stream is missing"]
+    expected_duration = total_output_frames(data) / data["fps"]
+    try:
+        for field, expected in (("width", data["width"]), ("height", data["height"]),
+                                ("nb_read_frames", total_output_frames(data))):
+            if int(video.get(field, -1)) != expected:
+                failures.append(f"{field} does not match manifest")
+        rate = rate_as_float(video.get("avg_frame_rate", "0/1"))
+        if not math.isfinite(rate) or abs(rate - data["fps"]) > 1e-6:
+            failures.append("frame rate does not match manifest")
+        for label, actual in (("video", video.get("duration")),
+                              ("container", (payload.get("format") or {}).get("duration"))):
+            duration = float(actual)
+            if not math.isfinite(duration) or abs(duration - expected_duration) > 1 / data["fps"] + 0.001:
+                failures.append(f"{label} duration does not match manifest")
+    except (TypeError, ValueError, OverflowError):
+        failures.append("invalid numeric output metadata")
+    audio = [item for item in streams if item.get("codec_type") == "audio"]
+    if bool(audio) != bool(data.get("audio")):
+        failures.append("audio streams do not match manifest")
+    for stream in audio:
+        try:
+            duration = float(stream.get("duration"))
+            if (not math.isfinite(duration) or abs(duration - expected_duration) > max(1 / data["fps"], 0.05)
+                    or int(stream.get("sample_rate", 0)) <= 0 or int(stream.get("channels", 0)) <= 0):
+                failures.append("invalid audio duration or geometry")
+        except (TypeError, ValueError, OverflowError):
+            failures.append("invalid audio metadata")
+    return failures
+
+
 def command_probe(args: argparse.Namespace) -> int:
     payload = probe_video(args.video)
     failures: list[str] = []
@@ -2116,21 +2235,7 @@ def command_probe(args: argparse.Namespace) -> int:
         data, warnings = load_and_validate(args.manifest, require_files=False, probe_files=False)
         for warning in warnings:
             eprint(f"WARNING: {warning}")
-        streams = payload.get("streams") or []
-        video_stream = next((item for item in streams if item.get("codec_type") == "video"), None)
-        if video_stream is None:
-            failures.append("video stream is missing")
-        else:
-            if int(video_stream.get("width", -1)) != int(data["width"]):
-                failures.append("width does not match manifest")
-            if int(video_stream.get("height", -1)) != int(data["height"]):
-                failures.append("height does not match manifest")
-            if int(video_stream.get("nb_read_frames", -1)) != total_output_frames(data):
-                failures.append("frame count does not match manifest")
-            if abs(rate_as_float(video_stream.get("avg_frame_rate", "0/1")) - int(data["fps"])) > 1e-6:
-                failures.append("frame rate does not match manifest")
-        if data.get("audio") and not any(item.get("codec_type") == "audio" for item in streams):
-            failures.append("audio stream declared by manifest is missing")
+        failures = output_validation_failures(payload, data)
         payload["manifest_check"] = "passed" if not failures else {"failed": failures}
     print(json.dumps(payload, indent=2))
     return 1 if failures else 0
