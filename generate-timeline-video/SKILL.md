@@ -40,7 +40,7 @@ Translate the request into contiguous shots. Give each shot one visual purpose a
 
 This writes explicit `at` times and deterministic placeholder paths. Generate those images next; the renderer is downstream of this motion plan.
 
-For character or animal action, read [references/character-motion.md](references/character-motion.md) before generating keyframes. Plan visible whole-body action together with relevant expression and secondary motion: eyes/gaze, head, ears, tail, and clothing when present. Record their timed states in the shot's `prompt` or a project prompt record; `plan-keyframes` creates time slots, not these action decisions. Keep identity and scene invariants in `continuity`, and changing expression or appendage states in the per-keyframe instructions. Choose purposeful changes and intentional stillness for this shot rather than moving every feature constantly.
+For character or animal action, read [references/character-motion.md](references/character-motion.md) before generating keyframes. Plan visible whole-body action together with relevant expression and secondary motion: eyes/gaze, head, ears, tail, and clothing when present. After planning time slots, run `plan-motion timeline.json --write` to create structured `motion_plan` records. Fill each record's target/state changes, invariants and reference image; mark visual review as pending/pass/revise. These records work for any subject. `plan-keyframes` creates time slots, not action decisions. Keep identity and scene invariants in `continuity`, and changing expression or appendage states in the per-keyframe instructions. Choose purposeful changes and intentional stillness for this shot rather than moving every feature constantly.
 
 Planning checks the frame budget before writing. Increase duration/fps or relax the gap if the requested semantic poses cannot fit. Repeated planning preserves full time precision and is idempotent; generated paths avoid existing assets and referenced names.
 
@@ -80,14 +80,15 @@ For multiple keyframes, interpolation segments are joined before camera motion i
 "$PYTHON" "$SCRIPT" validate <project-dir>/timeline.json
 ```
 
-Resolve every reported error. Treat frame-rounding notices as intentional only after checking timing. The renderer rounds each duration to the nearest whole frame.
-Treat a warning that adjacent optical-flow/RIFE keyframes are byte-identical as an input defect: add a distinct pose or choose `hold`; interpolation cannot create the missing motion. Use `seaside-running-motion-test/` as the repository's motion-positive reference.
+Resolve every reported error. Treat frame-rounding notices as intentional only after checking timing. The renderer rounds durations to whole frames and places explicit intermediate times at `round(at * fps)` (half up). Events colliding on a frame are rejected. A closed shot's end image occupies its last displayed frame; the timing report distinguishes this endpoint adjustment from intermediate event timing.
+Treat a warning that adjacent optical-flow/RIFE keyframes are byte-identical as an input defect: add a distinct pose or choose `hold`; interpolation cannot create the missing motion. Use `dense-running-test/` as the repository's dense motion reference.
 
 ### 6. Render and verify
 
 ```bash
-"$PYTHON" "$SCRIPT" render <project-dir>/timeline.json --output <project-dir>/output/final.mp4
+"$PYTHON" "$SCRIPT" render <project-dir>/timeline.json --output <project-dir>/output/final.mp4 --cache-dir <project-dir>/.timeline-cache --command-timeout 300
 "$PYTHON" "$SCRIPT" probe <project-dir>/output/final.mp4 --manifest <project-dir>/timeline.json
+"$PYTHON" "$SCRIPT" inspect <project-dir>/output/final.mp4 --manifest <project-dir>/timeline.json --output-dir <project-dir>/review-001
 ```
 
 When the project has a fixed demo or prior render, run `benchmark <candidate> --baseline <baseline>`. Treat its temporal-luma and near-duplicate metrics as regression signals, not a replacement for visual inspection; a candidate may have more semantic motion while also having a larger luma jerk.
@@ -96,12 +97,10 @@ The renderer reports the actual backend, RIFE strategy, and optical-flow profile
 
 Use an `.mp4` output path. Publication follows geometry, frame count/rate, video/container duration, audio and full-decode checks. Without `--force`, publication refuses an output created by another process during rendering. JSON results are on stdout and progress/command logs are on stderr. Image normalization is cached only within a render; pure cuts use stream-copy while transitions require encoding.
 
-Inspect at least the first, middle, and last frame of every shot plus every transition. Confirm subject continuity, chronology, aspect ratio, exact fps, total frame count, audio sync, and that shared cut boundaries do not freeze. If an interpolation artifact appears, add a keyframe, change only that shot's backend/profile, or switch it to `blend`; do not lower QA thresholds to preserve a first render.
+Open the generated review page for adjacent source-image pairs, timestamped rendered samples, suspicious temporal changes and normal/slow playback. Apply [references/visual-continuity.md](references/visual-continuity.md) to every subject, and the character-specific checks only when applicable. Record outcomes and frame/time-specific issues in `review.json`; generated reports start with visual checks marked `not_reviewed`. Technical success never marks playback or natural motion as passed. If playback cannot be inspected, disclose that limitation.
 
-For character action, also inspect frames around the planned expression and secondary-motion events, plus interpolated frames between poses. Compare face/appendage crops and the full frame: a metrics pass does not prove blinking, ear rebound, tail movement, or stable paws. If a feature never changes in the inputs, fix the keyframe plan rather than expecting interpolation to invent its action. If a clean hold/cut animatic is the best available result, disclose the pose-update rate separately from encoded fps and state that it has no synthesized in-between frames.
-
-Check temporal continuity at keyframe boundaries and shot transitions: inspect several intermediate frames per pair, then review normal-speed playback when a player is available, using slow playback for suspected defects. Look for freezes, sudden speed/direction changes, size or position jumps, flicker, sliding planted feet, ghost limbs and background wobble. Use the declared timings to distinguish intended anticipation or recovery from an accidental pause. Repair the source images or timing when they cause the defect; change backend only when correspondence is the problem. Re-render and recheck the affected interval and its neighbors. If playback cannot be inspected, report that limitation instead of claiming smoothness from a contact sheet or metrics alone.
+The optional cache retains verified pair clips across runs, keyed by source bytes, timing, geometry, effective interpolation settings, renderer/tool/model contents and GPU selection. Source edits or settings changes invalidate affected pairs; camera motion is reapplied over the whole shot. Failed or degraded fallback clips are not cached. Rerun the same command after interruption to reuse completed pairs. The cache is disposable and can grow; put it in a task-owned directory outside source assets. Each external render command has a configurable timeout; no automatic infinite retry is performed.
 
 ## Preserve reproducibility
 
-Return the MP4 together with `timeline.json` and the keyframes. Keep prompt and continuity fields in the manifest even though the renderer ignores them. State the actual interpolation backend/profile, de-duplicated cut boundaries, any fallback, rounded timing, missing audio, or intentional limitation in the handoff.
+Return the MP4 together with `timeline.json` and the keyframes. Keep prompt and continuity fields in the manifest even though the renderer ignores them. State the actual interpolation backend/profile, de-duplicated cut boundaries, any fallback, reported keyframe timing adjustments, cache reuse, missing audio, or intentional limitation in the handoff.

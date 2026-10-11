@@ -13,7 +13,7 @@ For each timed keyframe, describe the primary action and the relevant visible de
 
 Choose only details that serve the requested action and can be seen. Intentional stillness is valid. Do not add perpetual blinking or tail movement to every subject. Ensure framing exposes the planned features, and keep the camera/background stable while establishing motion.
 
-Use `prompt` for the shot's action plan and a project prompt record for individual keyframe instructions. The renderer ignores this prose. Keep the unchanged identity, wardrobe, palette, lighting and camera in `continuity`; do not freeze eye openness, ear angle or tail position in that invariant block. Derive pose edits from an inspected anchor/reference so expression changes do not become identity changes.
+Use the structured `motion_plan` for timed target/state changes and review status, with `prompt` or a prompt record for full generation wording. The renderer ignores this prose. Keep the unchanged identity, wardrobe, palette, lighting and camera in `continuity`; do not freeze eye openness, ear angle or tail position in that invariant block. Derive pose edits from an inspected anchor/reference so expression changes do not become identity changes.
 
 ## Example: a stylized two-second puppy dance
 
@@ -53,14 +53,6 @@ Compare every neighboring pair side by side or in an aligned overlay before inte
 
 Track moving parts through the timed sequence rather than interpreting each picture independently. For boxing, the same arm must stay responsible for its punch from preparation to extension and recovery, while the other guards; a left/right swap creates an impossible trajectory. Check event order and reasonable displacement over each time interval. Regenerate identity/geometry drift, adjust timing for a plausible path, or add a bridge pose when a large change lacks an intermediate state. Do not expect a stronger interpolation model to repair incompatible source poses.
 
-### Rendered temporal continuity
+### Rendered character checks
 
-Inspect multiple in-between frames in each image pair, including frames immediately before and after keyframe joins. Review the full clip at normal speed when a player is available; replay suspect intervals slowly to locate defects. Normal-speed playback reveals rhythm and stutters that isolated stills can miss, while slow review exposes disappearing arms, glove fusion, doubled ears or tail jumps. If only frame samples were inspected, record that evidence level explicitly.
-
-Check both motion and scene stability: continuous trajectories, appropriate anticipation/recovery, no accidental boundary freeze or speed jump, no unexplained scale change, flickering stripes, shifting background or sliding foot contacts. Follow-through should agree with the primary movement without requiring every feature to move constantly. At a shot transition, verify the intended cut/overlap and chronology rather than demanding continuous motion across an intentional cut. Do not claim a seamless loop without checking the last-to-first playback boundary.
-
-Record suspect frame/time locations, their source pair and the remedy. Re-render and recheck the repaired interval together with neighboring intervals. Temporal-luma and duplicate-frame metrics can flag locations for inspection; they do not certify natural choreography or smooth playback.
-
-Before rendering, compare images to the timed plan. Verify actual eye closure/reopening, intended ear/tail states, stable attachments, visible framing, and body/foot contacts where required. If only the limbs change while requested details stay frozen, regenerate the affected keyframes.
-
-After rendering, inspect the full sequence and frames around each planned event, including in-between frames rather than only source poses. Use face and appendage crops alongside full-body views to catch eye smearing, doubled ears, tail discontinuities, malformed paws and landing/contact errors. Full decode, fps/frame-count checks and temporal metrics verify technical properties; they do not establish semantic motion quality. Report the actual backend, fallback status and any remaining visible defects.
+Use the shared [visual-continuity.md](visual-continuity.md) workflow and `inspect` output for source pairs, intermediate frames, event boundaries and playback. For characters, additionally check eye closure/reopening, stable ear/tail attachments, consistent punching/stepping side, planted foot contacts and follow-through. If only limbs change while requested details stay frozen, fix source poses. Record visible defects separately from technical probe/decode results; samples alone do not prove natural motion.
