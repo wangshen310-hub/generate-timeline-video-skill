@@ -11,7 +11,7 @@ Turn a narrative timeline into a reproducible video project. Use image generatio
 
 - Treat generated images as keyframes, not as 24 independently generated frames per second. Independent generations flicker and lose identity.
 - Describe `blend` as pixel blending and `optical-flow` as motion estimation. Never claim either method reconstructs physically correct hidden motion.
-- Add intermediate keyframes or split a shot when pose, layout, camera angle, lighting, or object identity changes substantially.
+- Preserve the requested temporal continuity. Add intermediate states for a continuous event; split shots when the narrative or viewpoint calls for a cut, not merely because interpolation is difficult.
 - Default to 1280x720, 24 fps, H.264 MP4, 2-4 seconds per shot, and no audio unless the request says otherwise.
 - Keep provided demo media fixed when it is being used as a regression benchmark; improve the code before changing the test input.
 - Keep every generated or copied artifact inside the user's chosen project directory.
@@ -33,6 +33,8 @@ Initialize a safe project skeleton:
 ```
 
 Translate the request into contiguous shots. Give each shot one visual purpose and put generation instructions in `prompt` plus invariant facts in `continuity`. Use one image for an intentional hold. For visible subject motion, declare `subject_motion` and plan the semantic poses before generating assets:
+
+For continuous action, read [references/motion-planning.md](references/motion-planning.md) before choosing shots or timing. Record action phases, trajectories and reasons for any hold/cut in `prompt` or the project plan. An opening still is not a default requirement. Do not label a pause or cut "intentional" after rendering merely to dismiss a continuity defect; it must serve the requested scene. Plan timing from changes in the action rather than distributing visual states evenly by convenience.
 
 ```bash
 "$PYTHON" "$SCRIPT" plan-keyframes <project-dir>/timeline.json --write
@@ -59,7 +61,7 @@ Check each keyframe against its timed motion plan, including visible eyes, ears,
 
 For every project, read [references/visual-continuity.md](references/visual-continuity.md) and compare every adjacent image pair before rendering, not just each image in isolation. Check subject/object shape, scale, framing, materials, attachments, shadows, background and lighting; distinguish planned changes from generation drift. Select the checks relevant to the content: products, landscapes, abstract imagery and text graphics do not need character expression or anatomy checks. For character action, also verify that the same limb follows its planned trajectory through preparation, extension and recovery.
 
-Keep adjacent optical-flow keyframes close in composition. For articulated motion, put distinct pose images at explicit `at` times in `intermediate_images`; RIFE cannot invent a footstep when supplied poses keep the same leg configuration. Default to at most 0.25 seconds between semantic poses for walking, running, hands, or other articulated action. Use up to 1 second for slow subject motion. Camera-only or atmospheric motion may use `subject_motion: "none"`. If validation reports a motion-gap warning, rerun `plan-keyframes --write` and generate every missing pose before rendering.
+Keep adjacent optical-flow keyframes close in composition. For articulated motion, put distinct pose images at explicit `at` times in `intermediate_images`; RIFE cannot invent a footstep when supplied poses keep the same leg configuration. Default to at most 0.25 seconds between semantic poses for articulated action and up to 1 second for slow subject motion. Rapidly deforming effects require an explicit, event-based `max_keyframe_gap` and closer samples around onset, peak or disappearance; being non-character content does not make them static. The current schema has no separate effects class: when `subject_motion: "none"` is used for effects, supply the explicit gap and motion plan. A gap check passing only checks spacing. If validation reports a motion-gap warning, rerun `plan-keyframes --write` and generate every missing state before rendering.
 
 ### 4. Choose interpolation deliberately
 
@@ -67,7 +69,7 @@ Keep adjacent optical-flow keyframes close in composition. For articulated motio
   Only the start image is read, including when `--interpolation hold` overrides a shot; unused intermediate/end images and their timing are ignored.
 - Use `blend` for lighting changes, abstract imagery, flat graphics, and the most reliable fallback.
 - Use `optical-flow` for modest spatial displacement with stable, textured subjects and backgrounds. Prefer `blend` or `hold` plus camera motion for crisp geometric graphics that would visibly ghost.
-- Split the shot instead of interpolating through cuts, large pose changes, entering or disappearing objects, or unrelated compositions.
+- Use separate shots for intended cuts or unrelated compositions. Within a continuous event, first plan intermediate states for large changes, entry, occlusion or disappearance. Fire, smoke and breaking objects need a short feasibility test on the hardest interval before generating the whole sequence; see [motion-planning.md](references/motion-planning.md). Do not substitute an unrequested freeze/cut for unsupported motion or keep adding frames without checking whether correspondence improves.
 
 - Keep the `balanced` optical-flow profile as the default. Treat `large-motion` as experimental and compare its output visually because wider search can create tearing or duplicated anatomy.
 - Use optional `rife` for larger or articulated motion only when the user has an available RIFE ncnn Vulkan executable and v4 model. Prefer its `recursive` midpoint strategy for stable endpoints; use `direct` only when faster rendering is worth extra endpoint QA. It falls back to optical flow and then blend unless `--strict` is set.
@@ -97,7 +99,7 @@ The renderer reports the actual backend, RIFE strategy, and optical-flow profile
 
 Use an `.mp4` output path. Publication follows geometry, frame count/rate, video/container duration, audio and full-decode checks. Without `--force`, publication refuses an output created by another process during rendering. JSON results are on stdout and progress/command logs are on stderr. Image normalization is cached only within a render; pure cuts use stream-copy while transitions require encoding.
 
-Open the generated review page for adjacent source-image pairs, timestamped rendered samples, suspicious temporal changes and normal/slow playback. Apply [references/visual-continuity.md](references/visual-continuity.md) to every subject, and the character-specific checks only when applicable. Record outcomes and frame/time-specific issues in `review.json`; generated reports start with visual checks marked `not_reviewed`. Technical success never marks playback or natural motion as passed. If playback cannot be inspected, disclose that limitation.
+Open the generated review page for adjacent source-image pairs, timestamped rendered samples, suspicious temporal changes and normal/slow playback. Apply [references/visual-continuity.md](references/visual-continuity.md) to every subject, and the character-specific checks only when applicable. Record each outcome as `not_reviewed`, `pass` or `revise` in `review.json`; "reviewed" alone is not an acceptance decision. Run `review-status <project-dir>/review-001 --write` before describing the result as ready. Unresolved issues require revision. If playback cannot be inspected, keep it `not_reviewed` and deliver a clearly labeled review preview, not a completed smooth-animation claim. This is a record of performed checks, not an automatic visual judge.
 
 The optional cache retains verified pair clips across runs, keyed by source bytes, timing, geometry, effective interpolation settings, renderer/tool/model contents and GPU selection. Source edits or settings changes invalidate affected pairs; camera motion is reapplied over the whole shot. Failed or degraded fallback clips are not cached. Rerun the same command after interruption to reuse completed pairs. The cache is disposable and can grow; put it in a task-owned directory outside source assets. Each external render command has a configurable timeout; no automatic infinite retry is performed.
 
