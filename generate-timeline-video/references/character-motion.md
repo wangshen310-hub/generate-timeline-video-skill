@@ -47,6 +47,20 @@ An individual edit instruction should couple changes explicitly, for example:
 
 ## Acceptance checks
 
+### Adjacent source-image continuity
+
+Compare every neighboring pair side by side or in an aligned overlay before interpolation. Follow stable landmarks such as eyes, shoulder attachments, glove cuffs, planted paws and tail base. Confirm character scale, anatomy, markings, framing, floor/shadow and background remain consistent except for planned changes. Check the whole silhouette as well as crops; a good-looking face can conceal a displaced body or foot.
+
+Track moving parts through the timed sequence rather than interpreting each picture independently. For boxing, the same arm must stay responsible for its punch from preparation to extension and recovery, while the other guards; a left/right swap creates an impossible trajectory. Check event order and reasonable displacement over each time interval. Regenerate identity/geometry drift, adjust timing for a plausible path, or add a bridge pose when a large change lacks an intermediate state. Do not expect a stronger interpolation model to repair incompatible source poses.
+
+### Rendered temporal continuity
+
+Inspect multiple in-between frames in each image pair, including frames immediately before and after keyframe joins. Review the full clip at normal speed when a player is available; replay suspect intervals slowly to locate defects. Normal-speed playback reveals rhythm and stutters that isolated stills can miss, while slow review exposes disappearing arms, glove fusion, doubled ears or tail jumps. If only frame samples were inspected, record that evidence level explicitly.
+
+Check both motion and scene stability: continuous trajectories, appropriate anticipation/recovery, no accidental boundary freeze or speed jump, no unexplained scale change, flickering stripes, shifting background or sliding foot contacts. Follow-through should agree with the primary movement without requiring every feature to move constantly. At a shot transition, verify the intended cut/overlap and chronology rather than demanding continuous motion across an intentional cut. Do not claim a seamless loop without checking the last-to-first playback boundary.
+
+Record suspect frame/time locations, their source pair and the remedy. Re-render and recheck the repaired interval together with neighboring intervals. Temporal-luma and duplicate-frame metrics can flag locations for inspection; they do not certify natural choreography or smooth playback.
+
 Before rendering, compare images to the timed plan. Verify actual eye closure/reopening, intended ear/tail states, stable attachments, visible framing, and body/foot contacts where required. If only the limbs change while requested details stay frozen, regenerate the affected keyframes.
 
 After rendering, inspect the full sequence and frames around each planned event, including in-between frames rather than only source poses. Use face and appendage crops alongside full-body views to catch eye smearing, doubled ears, tail discontinuities, malformed paws and landing/contact errors. Full decode, fps/frame-count checks and temporal metrics verify technical properties; they do not establish semantic motion quality. Report the actual backend, fallback status and any remaining visible defects.
