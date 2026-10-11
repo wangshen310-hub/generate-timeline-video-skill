@@ -30,6 +30,33 @@ This Codex skill turns a written timeline into a reproducible MP4 by generating 
 
 渲染器本身只使用 Python 标准库。
 
+## 渲染正确性与验证
+
+- `blend` 包含精确的首尾采样；共享 cut 边界使用半开区间，下一镜头提供边界帧。
+- 多关键帧先插值拼接，再对整个镜头应用一次运镜，避免平移和缩放在片段边界重启。
+- `hold`（包括 `--interpolation hold`）只读取首图，忽略未使用的中间图、尾图和时间点。
+- 校验和关键帧规划均检查帧预算；规划保留时间精度，重复 `--write` 不增加槽位，也不复用冲突的文件名。
+- 光流和 RIFE 的图片归一化缓存在单次渲染内复用；纯 cut 拼接使用视频 stream-copy。带转场的拼接仍编码。
+- 标准输出只包含 JSON，执行日志写入标准错误。成片检查尺寸、帧数、帧率、视频/容器时长、音轨和完整解码后才发布。
+- 输出必须为 `.mp4`。临时成片与输出在同一文件系统；`--force` 原子替换，无 `--force` 时原子创建并拒绝并发覆盖。
+
+运行完整测试（必须先把 FFmpeg 与 FFprobe 加入 PATH，否则集成测试会跳过）：
+
+```text
+python -m unittest discover -s tests -v
+```
+
+CI 在 Python 3.10 和 3.13 上运行单元测试、真实 FFmpeg 集成测试及三个固定示例的校验。RIFE 实际推理需要外部运行时，默认测试只覆盖其命令构造和失败回退。
+
+Windows PowerShell 示例：
+
+```powershell
+$renderer = "generate-timeline-video/scripts/timeline_video.py"
+python $renderer validate dense-running-test/timeline.json
+python $renderer render dense-running-test/timeline.json --interpolation blend --output demo.mp4
+python $renderer probe demo.mp4 --manifest dense-running-test/timeline.json
+```
+
 ## 安装 Skill
 
 将 `generate-timeline-video` 目录复制到 Codex Skill 目录：

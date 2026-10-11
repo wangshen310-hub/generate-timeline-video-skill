@@ -105,8 +105,8 @@ Prefer `fade` as the neutral transition. FFmpeg's `dissolve` intentionally uses 
 The renderer computes each shot as:
 
 ```text
-shot_frames = round(shot_duration_seconds * fps)
-transition_frames = round(transition_duration_seconds * fps)
+shot_frames = floor(shot_duration_seconds * fps + 0.5)
+transition_frames = floor(transition_duration_seconds * fps + 0.5)
 output_frames = sum(shot_frames) - sum(non_cut_transition_frames)
 output_duration = output_frames / fps
 ```

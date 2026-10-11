@@ -40,6 +40,8 @@ Translate the request into contiguous shots. Give each shot one visual purpose a
 
 This writes explicit `at` times and deterministic placeholder paths. Generate those images next; the renderer is downstream of this motion plan.
 
+Planning checks the frame budget before writing. Increase duration/fps or relax the gap if the requested semantic poses cannot fit. Repeated planning preserves full time precision and is idempotent; generated paths avoid existing assets and referenced names.
+
 ### 3. Generate continuity-aware keyframes
 
 Use the available image-generation capability rather than drawing frames in Python.
@@ -56,6 +58,7 @@ Keep adjacent optical-flow keyframes close in composition. For articulated motio
 ### 4. Choose interpolation deliberately
 
 - Use `hold` for one image, freeze frames, or a still with optional camera motion.
+  Only the start image is read, including when `--interpolation hold` overrides a shot; unused intermediate/end images and their timing are ignored.
 - Use `blend` for lighting changes, abstract imagery, flat graphics, and the most reliable fallback.
 - Use `optical-flow` for modest spatial displacement with stable, textured subjects and backgrounds. Prefer `blend` or `hold` plus camera motion for crisp geometric graphics that would visibly ghost.
 - Split the shot instead of interpolating through cuts, large pose changes, entering or disappearing objects, or unrelated compositions.
@@ -63,6 +66,7 @@ Keep adjacent optical-flow keyframes close in composition. For articulated motio
 - Keep the `balanced` optical-flow profile as the default. Treat `large-motion` as experimental and compare its output visually because wider search can create tearing or duplicated anatomy.
 - Use optional `rife` for larger or articulated motion only when the user has an available RIFE ncnn Vulkan executable and v4 model. Prefer its `recursive` midpoint strategy for stable endpoints; use `direct` only when faster rendering is worth extra endpoint QA. It falls back to optical flow and then blend unless `--strict` is set.
 Camera motion presets are `static`, `zoom-in`, `zoom-out`, `pan-left`, `pan-right`, `pan-up`, and `pan-down`. The pan name describes the camera viewport, so foreground content appears to travel in the opposite direction. These are compositional moves, not 3D scene reconstruction.
+For multiple keyframes, interpolation segments are joined before camera motion is applied across the whole shot.
 
 ### 5. Validate before rendering
 
@@ -83,6 +87,8 @@ Treat a warning that adjacent optical-flow/RIFE keyframes are byte-identical as 
 When the project has a fixed demo or prior render, run `benchmark <candidate> --baseline <baseline>`. Treat its temporal-luma and near-duplicate metrics as regression signals, not a replacement for visual inspection; a candidate may have more semantic motion while also having a larger luma jerk.
 
 The renderer reports the actual backend, RIFE strategy, and optical-flow profile. Failed RIFE falls back to optical flow, then failed optical flow falls back to `blend`. Pass `--strict` when any fallback is unacceptable. A candidate is probed before atomically replacing the output, and source media paths are protected even with `--force`.
+
+Use an `.mp4` output path. Publication follows geometry, frame count/rate, video/container duration, audio and full-decode checks. Without `--force`, publication refuses an output created by another process during rendering. JSON results are on stdout and progress/command logs are on stderr. Image normalization is cached only within a render; pure cuts use stream-copy while transitions require encoding.
 
 Inspect at least the first, middle, and last frame of every shot plus every transition. Confirm subject continuity, chronology, aspect ratio, exact fps, total frame count, audio sync, and that shared cut boundaries do not freeze. If an interpolation artifact appears, add a keyframe, change only that shot's backend/profile, or switch it to `blend`; do not lower QA thresholds to preserve a first render.
 
