@@ -10,6 +10,7 @@ import argparse
 from contextlib import contextmanager
 from contextvars import ContextVar
 import hashlib
+import html
 import json
 import math
 import os
@@ -71,7 +72,7 @@ class TimelineError(Exception):
 
 
 def eprint(message: str) -> None:
-    print(message, file=sys.stderr)
+    print(message, file=sys.stderr, flush=True)
 
 
 def require_tool(name: str) -> str:
@@ -81,6 +82,9 @@ def require_tool(name: str) -> str:
     return executable
 
 
+_command_timeout: ContextVar[float] = ContextVar("command_timeout", default=300.0)
+
+
 def run(
     command: list[str],
     *,
@@ -88,14 +92,15 @@ def run(
     cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     eprint(f"+ {shlex.join(command)}")
-    return subprocess.run(
-        command,
-        check=True,
-        text=True,
-        cwd=cwd,
-        stdout=subprocess.PIPE if capture else sys.stderr,
-        stderr=subprocess.PIPE if capture else None,
-    )
+    try:
+        return subprocess.run(
+            command, check=True, text=True, cwd=cwd,
+            stdout=subprocess.PIPE if capture else sys.stderr,
+            stderr=subprocess.PIPE if capture else None,
+            timeout=_command_timeout.get(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimelineError(f"Command timed out after {_command_timeout.get():g}s: {command[0]}") from exc
 
 
 def is_number(value: Any) -> bool:
@@ -268,12 +273,70 @@ def referenced_media_paths(data: dict[str, Any], manifest_dir: Path) -> set[Path
     return paths
 
 
+def motion_plan_errors(shot: dict[str, Any]) -> list[str]:
+    plan = shot.get("motion_plan")
+    if plan is None:
+        return []
+    if not isinstance(plan, list) or not plan:
+        return ["motion_plan must be a non-empty array"]
+    errors = []
+    for index, entry in enumerate(plan):
+        prefix = f"motion_plan[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        if not is_number(entry.get("at")) or not 0 <= entry["at"] <= float(shot["duration"]):
+            errors.append(f"{prefix}.at must be within the shot")
+        for field in ("image", "reference_image"):
+            if not isinstance(entry.get(field), str) or not entry[field].strip():
+                errors.append(f"{prefix}.{field} must be a non-empty path")
+        if entry.get("review") not in {"pending", "pass", "revise"}:
+            errors.append(f"{prefix}.review must be pending, pass or revise")
+        keep = entry.get("keep")
+        if not isinstance(keep, list) or not all(isinstance(v, str) and v.strip() for v in keep):
+            errors.append(f"{prefix}.keep must be an array of non-empty strings")
+        changes = entry.get("changes")
+        if not isinstance(changes, list) or not all(
+            isinstance(v, dict) and all(isinstance(v.get(k), str) and v[k].strip() for k in ("target", "state"))
+            for v in changes
+        ):
+            errors.append(f"{prefix}.changes needs target/state objects (empty is allowed for a hold)")
+    if not errors:
+        expected = ([(shot["start_image"], 0.0)] if interpolation_for(shot) == "hold" else keyframe_sequence_for(shot))
+        if [(e["image"], e["at"]) for e in plan] != expected:
+            errors.append("motion_plan must match the ordered image/time slots in the timeline")
+    return errors
+
+
+def shot_timing(shot: dict[str, Any], fps: int, include_endpoint: bool = True) -> list[dict[str, Any]]:
+    if interpolation_for(shot) == "hold":
+        return [{"image": shot["start_image"], "declared_at": 0, "frame": 0, "actual_at": 0, "error_seconds": 0}]
+    sequence = keyframe_sequence_for(shot)
+    frames = frame_count(float(shot["duration"]), fps)
+    total = frames - 1 if include_endpoint else frames
+    minimum = 1 if include_endpoint else 2
+    intervals = (distribute_timed_intervals(total, [at for _, at in sequence], float(shot["duration"]),
+                                           last_minimum=minimum, fps=fps)
+                 if intermediate_keyframes_are_timed(shot)
+                 else distribute_intervals(total, len(sequence) - 1, last_minimum=minimum))
+    position = 0
+    result = []
+    for index, (image, at) in enumerate(sequence):
+        if index:
+            position += intervals[index - 1]
+        result.append({"image": image, "declared_at": at, "frame": position,
+                       "actual_at": position / fps, "error_seconds": position / fps - at,
+                       "endpoint": index == len(sequence) - 1})
+    return result
+
+
 def load_and_validate(
     manifest_path: Path,
     *,
     require_files: bool = True,
     probe_files: bool = False,
     interpolation_override: str | None = None,
+    validate_motion: bool = True,
 ) -> tuple[dict[str, Any], list[str]]:
     manifest_path = manifest_path.expanduser().resolve()
     if not manifest_path.is_file():
@@ -461,6 +524,24 @@ def load_and_validate(
         if interpolation != "hold" and intermediate_valid and intermediate_images:
             if len(intermediate_images) + 2 > frames:
                 errors.append(f"{prefix} keyframes exceed the frame budget ({frames} frames)")
+            elif frames >= 2 and isinstance(end_image, str) and is_number(duration) and duration > 0:
+                try:
+                    if intermediate_keyframes_are_timed(shot):
+                        shot_timing(shot, fps)
+                except TimelineError as exc:
+                    errors.append(f"{prefix}: {exc}")
+
+        if validate_motion and intermediate_valid and is_number(duration) and duration > 0 and isinstance(start_image, str):
+            try:
+                plan_shot = dict(shot, interpolation=interpolation)
+                if interpolation == "hold" and interpolation_override == "hold":
+                    plan_shot.pop("motion_plan", None)
+                plan_errors = motion_plan_errors(plan_shot)
+                errors.extend(f"{prefix}.{error}" for error in plan_errors)
+                if not plan_errors and any(e.get("review") != "pass" for e in plan_shot.get("motion_plan", [])):
+                    warnings.append(f"{prefix}.motion_plan still needs visual review; technical validation is not approval")
+            except (TimelineError, KeyError, TypeError, ValueError):
+                errors.append(f"{prefix}.motion_plan cannot be matched to invalid keyframe slots")
 
         if interpolation in {"optical-flow", "rife"}:
             for (first_label, first_path), (second_label, second_path) in zip(
@@ -695,6 +776,30 @@ def encoding_args(preset: str, crf: int) -> list[str]:
 
 
 _image_cache: ContextVar[tuple[Path, dict] | None] = ContextVar("image_cache", default=None)
+_segment_cache: ContextVar[tuple[Path, str, list] | None] = ContextVar("segment_cache", default=None)
+
+
+@contextmanager
+def render_context(cache_dir: Path | None, ffmpeg: str, rife_runtime, timeout: float):
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise TimelineError("command-timeout must be a positive finite number")
+    timeout_token = _command_timeout.set(timeout)
+    token = None
+    events: list[dict] = []
+    try:
+        if cache_dir is not None:
+            directory = cache_dir.expanduser().resolve()
+            directory.mkdir(parents=True, exist_ok=True)
+            files = [Path(__file__), Path(ffmpeg), Path(require_tool("ffprobe"))]
+            if rife_runtime:
+                files.extend([rife_runtime[0], rife_runtime[1] / "flownet.param", rife_runtime[1] / "flownet.bin"])
+            runtime_key = hashlib.sha256(b"".join(file_digest(p) for p in files)).hexdigest()
+            token = _segment_cache.set((directory, runtime_key, events))
+        yield events
+    finally:
+        if token is not None:
+            _segment_cache.reset(token)
+        _command_timeout.reset(timeout_token)
 
 
 @contextmanager
@@ -1014,7 +1119,6 @@ def render_rife(
     normalize_image(ffmpeg, end_image, second, width, height)
 
     denominator = max(frames - 1 if include_endpoint else frames, 1)
-    temporal_filter: str | None = None
     if strategy == "direct":
         link_or_copy(first, sequence / "frame000000.png")
         for index in range(1, frames):
@@ -1037,8 +1141,10 @@ def render_rife(
         input_rate = str(fps)
     else:
         intervals = recursive_interval_count(denominator)
-        first_frame = sequence / "frame000000.png"
-        last_frame = sequence / f"frame{intervals:06d}.png"
+        grid = pair_dir / "midpoints"
+        grid.mkdir()
+        first_frame = grid / "frame000000.png"
+        last_frame = grid / f"frame{intervals:06d}.png"
         link_or_copy(first, first_frame)
         link_or_copy(second, last_frame)
 
@@ -1051,7 +1157,7 @@ def render_rife(
             if right_index - left_index <= 1:
                 return
             middle_index = (left_index + right_index) // 2
-            middle_frame = sequence / f"frame{middle_index:06d}.png"
+            middle_frame = grid / f"frame{middle_index:06d}.png"
             run(
                 rife_command(
                     rife_executable,
@@ -1068,12 +1174,23 @@ def render_rife(
             fill_midpoints(middle_index, right_index, middle_frame, right_frame)
 
         fill_midpoints(0, intervals, first_frame, last_frame)
-        link_or_copy(second, sequence / f"frame{intervals + 1:06d}.png")
-        input_rate = f"{fps * intervals}/{denominator}"
-        temporal_filter = f"framerate=fps={fps}:scene=100"
+        for index in range(frames):
+            left, remainder = divmod(index * intervals, denominator)
+            target = sequence / f"frame{index:06d}.png"
+            left_frame = grid / f"frame{left:06d}.png"
+            if remainder == 0:
+                link_or_copy(left_frame, target)
+            else:
+                # Evaluate the requested time within its narrow midpoint bracket.
+                # FFmpeg framerate would blend pixels here and reintroduce ghosts.
+                run(rife_command(rife_executable, rife_model, left_frame,
+                                 grid / f"frame{left + 1:06d}.png", target,
+                                 remainder / denominator, rife_gpu),
+                    cwd=rife_executable.parent)
+        input_rate = str(fps)
 
     post_motion = motion_filter(motion, width, height, frames, fps, normalized=True)
-    video_filters = [filter_value for filter_value in (temporal_filter, post_motion) if filter_value]
+    video_filters = [post_motion] if post_motion else []
     video_filters.extend([f"fps={fps}", "format=yuv420p"])
     run(
         [
@@ -1101,6 +1218,62 @@ def render_rife(
 
 
 def render_shot_pair(
+    data: dict[str, Any], shot: dict[str, Any], manifest_dir: Path,
+    output: Path, work_dir: Path, **settings: Any,
+) -> str:
+    cache = _segment_cache.get()
+    eprint(f"Rendering pair {shot['id']}")
+    if cache is None:
+        return render_shot_pair_uncached(data, shot, manifest_dir, output, work_dir, **settings)
+    directory, runtime_key, events = cache
+    effective = settings.get("interpolation_override") or interpolation_for(shot)
+    images = [resolve_media(manifest_dir, shot["start_image"])]
+    if effective != "hold":
+        images.append(resolve_media(manifest_dir, shot["end_image"]))
+    payload = {
+        "runtime": runtime_key, "sources": [file_digest(p).hex() for p in images],
+        "geometry": [data["width"], data["height"], data["fps"]],
+        "frames": frame_count(float(shot["duration"]), int(data["fps"])),
+        "motion": motion_for(shot), "interpolation": effective,
+        "flow": optical_flow_profile_for(shot, settings.get("optical_flow_profile_override")),
+        "rife_strategy": rife_strategy_for(shot, settings.get("rife_strategy_override")),
+        "settings": {k: str(v) for k, v in settings.items()},
+    }
+    key = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    video, metadata = directory / f"{key}.mp4", directory / f"{key}.json"
+    try:
+        record = json.loads(metadata.read_text(encoding="utf-8"))
+        if record["digest"] == file_digest(video).hex() and record["key"] == key:
+            link_or_copy(video, output)
+            events.append({"pair": shot["id"], "cache": "hit", "key": key})
+            eprint(f"Reusing pair {shot['id']}")
+            return record["method"]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    method = render_shot_pair_uncached(data, shot, manifest_dir, output, work_dir, **settings)
+    events.append({"pair": shot["id"], "cache": "miss", "key": key})
+    # Never let a degraded fallback mask recovery of the requested backend.
+    if "fallback" not in method:
+        probe = probe_video(output)
+        expected = {"width": data["width"], "height": data["height"], "fps": data["fps"],
+                    "shots": [{"duration": payload["frames"] / data["fps"]}]}
+        failures = output_validation_failures(probe, expected)
+        if failures:
+            raise TimelineError("Invalid cache candidate: " + "; ".join(failures))
+        run([settings["ffmpeg"], "-v", "error", "-xerror", "-i", str(output), "-f", "null", "-"])
+        with tempfile.NamedTemporaryFile(dir=directory, suffix=".mp4", delete=False) as handle:
+            temporary = Path(handle.name)
+        try:
+            shutil.copyfile(output, temporary)
+            digest = file_digest(temporary).hex()
+            os.replace(temporary, video)
+            write_json_atomic(metadata, {"key": key, "digest": digest, "method": method})
+        finally:
+            temporary.unlink(missing_ok=True)
+    return method
+
+
+def render_shot_pair_uncached(
     data: dict[str, Any],
     shot: dict[str, Any],
     manifest_dir: Path,
@@ -1257,6 +1430,7 @@ def distribute_timed_intervals(
     times: list[float],
     duration: float,
     last_minimum: int = 1,
+    fps: int | None = None,
 ) -> list[int]:
     """Map explicit keyframe times onto integer frame intervals."""
     segments = len(times) - 1
@@ -1276,9 +1450,11 @@ def distribute_timed_intervals(
 
     boundaries = [0]
     for index, at in enumerate(times[1:-1], start=1):
-        desired = int(math.floor(total * at / duration + 0.5))
+        desired = int(math.floor(at * (fps if fps is not None else total / duration) + 0.5))
         minimum = boundaries[-1] + minima[index - 1]
         maximum = total - sum(minima[index:])
+        if fps is not None and not minimum <= desired <= maximum:
+            raise TimelineError(f"Keyframe at {at:g}s cannot occupy a distinct frame at {fps} fps; adjust timing or fps")
         boundaries.append(min(max(desired, minimum), maximum))
     boundaries.append(total)
     return [right - left for left, right in zip(boundaries, boundaries[1:])]
@@ -1366,6 +1542,7 @@ def render_shot_keyframes(
             [at for _, at in keyframes],
             float(shot["duration"]),
             last_minimum=last_minimum,
+            fps=fps,
         )
     else:
         intervals = distribute_intervals(
@@ -2051,6 +2228,119 @@ def command_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_plan_motion(args: argparse.Namespace) -> int:
+    data, warnings = load_and_validate(args.manifest, require_files=False, validate_motion=False)
+    for shot in data["shots"]:
+        sequence = ([(shot["start_image"], 0.0)] if interpolation_for(shot) == "hold" else keyframe_sequence_for(shot))
+        previous = shot.get("motion_plan", [])
+        previous = previous if isinstance(previous, list) else []
+        old = {(e.get("image"), e.get("at")): e for e in previous if isinstance(e, dict)
+               and isinstance(e.get("image"), str) and is_number(e.get("at"))}
+        removed = [e for e in previous if isinstance(e, dict) and (e.get("image"), e.get("at")) not in sequence
+                   and isinstance(e.get("image"), str) and is_number(e.get("at"))]
+        if removed:
+            raise TimelineError(f"Shot {shot['id']} has obsolete motion-plan entries; reconcile them before rebuilding the plan")
+        shot["motion_plan"] = [old.get((image, at), {"image": image, "at": at,
+            "reference_image": sequence[max(0, index - 1)][0], "changes": [], "keep": [], "review": "pending"})
+            for index, (image, at) in enumerate(sequence)]
+    if args.write:
+        write_json_atomic(args.manifest.expanduser().resolve(), data)
+    print(json.dumps({"status": "written" if args.write else "planned", "timeline": data,
+                      "note": "Fill target/state changes and invariants, then visually review; empty plans do not imply approval."}, indent=2))
+    return 0
+
+
+def command_inspect(args: argparse.Namespace) -> int:
+    ffmpeg = require_tool("ffmpeg")
+    manifest = args.manifest.expanduser().resolve()
+    data, warnings = load_and_validate(manifest, require_files=True, interpolation_override=args.interpolation)
+    if args.interpolation:
+        data = dict(data, shots=[dict(shot, interpolation=args.interpolation) for shot in data["shots"]])
+    video = args.video.expanduser().resolve()
+    probe = probe_video(video)
+    failures = output_validation_failures(probe, data)
+    if failures:
+        raise TimelineError("Inspection video does not match manifest: " + "; ".join(failures))
+    run([ffmpeg, "-v", "error", "-xerror", "-i", str(video), "-f", "null", "-"])
+    benchmark = benchmark_video(ffmpeg, video, 0.1)
+    directory = args.output_dir.expanduser().resolve()
+    if directory.exists():
+        raise TimelineError(f"Inspection directory already exists; choose a new directory: {directory}")
+    directory.mkdir(parents=True)
+    # Mark incomplete before generating assets; never leave a false 'passed' report.
+    write_json_atomic(directory / "report.json", {"status": "incomplete"})
+    fps, total = int(data["fps"]), total_output_frames(data)
+    deduplicated = shared_cut_boundaries(data, manifest.parent)
+    samples = {0, total - 1}
+    pairs, timing, offset = [], {}, 0
+    sources: dict[str, str] = {}
+    for index, shot in enumerate(data["shots"]):
+        points = shot_timing(shot, fps, index not in deduplicated)
+        timing[shot["id"]] = points
+        for point in points:
+            frame = min(total - 1, offset + point["frame"])
+            samples.update(n for n in (frame - 1, frame, frame + 1) if 0 <= n < total)
+            source = str(resolve_media(manifest.parent, point["image"]))
+            if source not in sources:
+                name = f"source-{len(sources):04d}.png"
+                run([ffmpeg, "-v", "error", "-i", source, "-vf", "scale=320:-2", "-frames:v", "1", str(directory / name)])
+                sources[source] = name
+        for left, right in zip(points, points[1:]):
+            start, end = offset + left["frame"], offset + right["frame"]
+            selected = sorted({min(total - 1, start + int((end - start) * fraction + 0.5))
+                               for fraction in (0, .25, .5, .75, 1)})
+            samples.update(selected)
+            pairs.append({"shot": shot["id"], "from": left["image"], "to": right["image"],
+                          "start_frame": start, "end_frame": end, "sample_frames": selected})
+        shot_frames = frame_count(float(shot["duration"]), fps)
+        transition, duration = transition_for(shot)
+        overlap = frame_count(float(duration), fps) if index < len(data["shots"]) - 1 and transition != "cut" else 0
+        # Include the middle of each shot, including intentional holds.
+        samples.add(min(total - 1, offset + shot_frames // 2))
+        offset += shot_frames - overlap
+    for item in benchmark["largest_temporal_luma_jerks"]:
+        samples.update(n for n in (item["frame"] - 1, item["frame"], item["frame"] + 1) if 0 <= n < total)
+    ordered = sorted(samples)
+    # Bounded batches support older and newer FFmpeg without deprecated script options
+    # and stay below Windows command-line length limits.
+    for first in range(0, len(ordered), 128):
+        batch = ordered[first:first + 128]
+        selection = "+".join(f"eq(n\\,{n})" for n in batch)
+        run([ffmpeg, "-v", "error", "-i", str(video), "-vf", f"select={selection},scale=480:-2",
+             "-fps_mode", "vfr", "-frames:v", str(len(batch)), "-start_number", str(first),
+             str(directory / "sample-%06d.png")])
+    shutil.copyfile(video, directory / "preview.mp4")
+    review = {"source_pairs": "not_reviewed", "intermediate_frames": "not_reviewed",
+              "normal_speed_playback": "not_reviewed", "issues": []}
+    write_json_atomic(directory / "review.json", review)
+    report = {"status": "ready_for_visual_review", "technical": "passed", "review": review,
+              "keyframe_timing": timing, "pairs": pairs, "sample_frames": ordered,
+              "benchmark": benchmark, "warnings": warnings}
+    write_json_atomic(directory / "report.json", report)
+    source_html = "".join(f'<figure><img src="{name}"><figcaption>{html.escape(Path(source).name)}</figcaption></figure>'
+                          for source, name in sources.items())
+    pair_html = "".join(f'<li>{html.escape(p["shot"])}: {html.escape(p["from"])} → {html.escape(p["to"])}; '
+                        f'frames {p["start_frame"]}–{p["end_frame"]}<div class="grid">'
+                        f'<img src="{sources[str(resolve_media(manifest.parent, p["from"]))]}">'
+                        f'<img src="{sources[str(resolve_media(manifest.parent, p["to"]))]}"></div></li>' for p in pairs)
+    frame_html = "".join(f'<figure><img src="sample-{i:06d}.png"><figcaption>Frame {n} · {n/fps:.3f}s</figcaption></figure>'
+                         for i, n in enumerate(ordered))
+    page = ('<!doctype html><meta charset="utf-8"><title>Timeline review</title>'
+            '<style>body{font:16px system-ui;background:#202124;color:#eee;margin:24px}video{width:min(100%,960px)}'
+            '.grid{display:flex;flex-wrap:wrap}figure{margin:8px}img{width:320px}figcaption{max-width:320px;overflow-wrap:anywhere}</style>'
+            '<h1>Timeline review</h1><p>Technical checks passed. Visual review is pending; images and metrics do not certify motion quality.</p>'
+            '<video id="preview" src="preview.mp4" controls></video><p>Playback speed '
+            '<select onchange="document.getElementById(\'preview\').playbackRate=Number(this.value)">'
+            '<option value="1">1×</option><option value="0.5">0.5×</option><option value="0.25">0.25×</option></select></p>'
+            '<p>Record source-pair, intermediate-frame and playback findings separately in review.json, with frame numbers and remedies.</p>'
+            f'<h2>Source images</h2><div class="grid">{source_html}</div><h2>Adjacent pairs</h2><ol>{pair_html}</ol>'
+            f'<h2>Rendered samples</h2><div class="grid">{frame_html}</div>')
+    (directory / "index.html").write_text(page, encoding="utf-8")
+    print(json.dumps({"status": report["status"], "report": str(directory / "report.json"),
+                      "preview": str(directory / "index.html")}, indent=2))
+    return 0
+
+
 def command_render(args: argparse.Namespace) -> int:
     ffmpeg = require_tool("ffmpeg")
     require_tool("ffprobe")
@@ -2092,7 +2382,10 @@ def command_render(args: argparse.Namespace) -> int:
         raise TimelineError(f"Output exists; pass --force to replace it: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix=".timeline-video-", dir=output.parent) as temp_name, normalization_cache(Path(temp_name) / "normalized"):
+    with render_context(getattr(args, "cache_dir", None), ffmpeg, rife_runtime,
+                        getattr(args, "command_timeout", 300)) as cache_events, \
+            tempfile.TemporaryDirectory(prefix=".timeline-video-", dir=output.parent) as temp_name, \
+            normalization_cache(Path(temp_name) / "normalized"):
         work_dir = Path(temp_name)
         clips: list[Path] = []
         methods: dict[str, str] = {}
@@ -2149,6 +2442,16 @@ def command_render(args: argparse.Namespace) -> int:
                 "fps": data["fps"],
                 "duration": total_frames / data["fps"],
                 "interpolation_used": methods,
+                "rife_sampling_policy": {
+                    "recursive": "midpoint grid plus RIFE local-timestep refinement; no FFmpeg pixel blending",
+                    "direct": "RIFE at target times with source endpoints preserved",
+                },
+                "keyframe_timing": {
+                    shot["id"]: shot_timing(dict(shot, interpolation=args.interpolation or interpolation_for(shot)),
+                                            data["fps"], index not in deduplicated_boundaries)
+                    for index, shot in enumerate(data["shots"])
+                },
+                "segment_cache": cache_events,
                 "intermediate_keyframes": {
                     shot["id"]: (0 if (args.interpolation or interpolation_for(shot)) == "hold"
                                  else len(intermediate_images_for(shot))) for shot in data["shots"]
@@ -2343,12 +2646,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fail instead of falling back from RIFE or optical flow",
     )
     render_parser.add_argument("--force", action="store_true", help="Replace an existing output file")
+    render_parser.add_argument("--cache-dir", type=Path, help="Reuse verified content-addressed pair clips across renders")
+    render_parser.add_argument("--command-timeout", type=float, default=300, help="Timeout per external command in seconds (default 300)")
     render_parser.set_defaults(handler=command_render)
 
     probe_parser = subparsers.add_parser("probe", help="Inspect a video and optionally compare it to a manifest")
     probe_parser.add_argument("video", type=Path)
     probe_parser.add_argument("--manifest", type=Path)
     probe_parser.set_defaults(handler=command_probe)
+
+    motion_parser = subparsers.add_parser("plan-motion", help="Create reviewable motion-plan records for existing keyframe slots")
+    motion_parser.add_argument("manifest", type=Path)
+    motion_parser.add_argument("--write", action="store_true")
+    motion_parser.set_defaults(handler=command_plan_motion)
+
+    inspect_parser = subparsers.add_parser("inspect", help="Generate pair/sample review assets and a local playback page")
+    inspect_parser.add_argument("video", type=Path)
+    inspect_parser.add_argument("--manifest", type=Path, required=True)
+    inspect_parser.add_argument("--output-dir", type=Path, required=True)
+    inspect_parser.add_argument("--interpolation", choices=sorted(INTERPOLATIONS), help="Match an interpolation override used for rendering")
+    inspect_parser.set_defaults(handler=command_inspect)
 
     benchmark_parser = subparsers.add_parser(
         "benchmark",

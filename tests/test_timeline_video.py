@@ -172,14 +172,14 @@ class TimelineVideoTests(unittest.TestCase):
                 )
 
         rife_commands = [command for command in commands if command[0] == "rife"]
-        self.assertEqual(len(rife_commands), 3)
+        self.assertEqual(len(rife_commands), 5)
         self.assertTrue(
-            all(command[command.index("-s") + 1] == "0.500000000" for command in rife_commands)
+            all(command[command.index("-s") + 1] == "0.500000000" for command in rife_commands[:3])
         )
         encode_command = commands[-1]
-        self.assertEqual(encode_command[encode_command.index("-framerate") + 1], "16/3")
+        self.assertEqual(encode_command[encode_command.index("-framerate") + 1], "4")
         video_filter = encode_command[encode_command.index("-vf") + 1]
-        self.assertIn("framerate=fps=4", video_filter)
+        self.assertNotIn("framerate=", video_filter)
 
     def test_rife_command_uses_arbitrary_timestep_and_gpu(self) -> None:
         command = timeline_video.rife_command(

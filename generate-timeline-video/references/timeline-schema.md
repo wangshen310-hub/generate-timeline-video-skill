@@ -86,6 +86,7 @@ Use UTF-8 JSON. Resolve all relative media paths from the directory containing `
 | `subject_motion` | no | `none`, `slow`, or `articulated`. Defaults to `none`; `articulated` enforces a 0.25-second default gap. |
 | `max_keyframe_gap` | no | Positive maximum seconds between semantic keyframes; overrides the motion-class default. |
 | `transition_to_next` | no | Transition beginning near this shot's end. Defaults to a cut. |
+| `motion_plan` | no | Structured per-keyframe action and review records; see below. |
 | `prompt` | no | Image-generation instruction retained for reproducibility. |
 | `continuity` | no | Invariants copied unchanged across related keyframe prompts. |
 
@@ -116,7 +117,7 @@ When a subject changes pose, put every materially different pose in
 `intermediate_images`. Use `plan-keyframes timeline.json --write` to create
 deterministic timed placeholders before generating images. For articulated
 action, the default maximum gap is 0.25 seconds; slow subject motion defaults to
-1 second. The renderer maps explicit `at` values to integer frame intervals,
+1 second. The renderer maps explicit intermediate `at` values to `floor(at * fps + 0.5)` frame positions without rescaling the whole timeline,
 removes repeated pair boundaries, and preserves the declared total frame count.
 Legacy path strings remain supported and are spaced evenly. Interpolation cannot
 invent an unseen footstep from two keyframes that have the same leg pose.
@@ -152,6 +153,31 @@ Build each prompt in this order:
 [target aspect ratio; no captions, watermark, border, or UI]
 ```
 
-For character action, describe coupled body, expression and secondary-motion states at each planned time. Keep changing eye openness, gaze, ear bend and tail position out of the invariant `continuity` block. Store per-keyframe instructions in a project prompt record when the shot-level `prompt` is too coarse. These are generation instructions, not new renderer fields; `plan-keyframes` schedules slots but does not infer their semantic actions. Read [character-motion.md](character-motion.md) for the puppy example and visual acceptance checks.
+For character action, describe coupled body, expression and secondary-motion states at each planned time. Keep changing eye openness, gaze, ear bend and tail position out of the invariant `continuity` block. Use `motion_plan` for structured per-keyframe states and a project prompt record for full generation wording. The renderer validates the records but does not interpret their prose; `plan-keyframes` schedules slots without inferring semantic actions. Read [character-motion.md](character-motion.md) for the puppy example and visual acceptance checks.
 
 For a recurring subject, use an image edit/reference workflow and ask for only the stated change. If the requested change is too large for reliable interpolation, split it into additional shots or keyframe pairs.
+
+## Structured motion plan
+
+After `plan-keyframes`, run `plan-motion timeline.json --write`. It creates a record for every image/time slot and preserves matching existing records on repeated runs. Obsolete records are reported for reconciliation rather than silently deleted. Empty changes are valid for deliberate stillness, but generated records are `pending` and require content-specific planning and visual review. A hold has a single record at time zero.
+
+Each optional shot-level `motion_plan` entry has:
+
+```json
+{
+  "at": 0.5,
+  "image": "keyframes/pose-02.png",
+  "reference_image": "keyframes/pose-01.png",
+  "changes": [{"target": "image-right glove", "state": "half extension, same shoulder attachment"}],
+  "keep": ["planted hind paws", "character identity", "camera and background"],
+  "review": "pending"
+}
+```
+
+The example is one entry, not a complete plan: a plan must match every ordered image/time slot. `changes` contains target/state strings, `keep` contains invariant strings, `reference_image` identifies the generation reference and `review` is pending/pass/revise. Validation checks structure and correspondence, not whether image pixels satisfy the prose. Pending/revise records produce a warning. Rendering still requires visual acceptance; `pass` is a recorded reviewer judgment, not an automated inference. An explicit `--interpolation hold` override ignores unused motion records as well as unused images.
+
+## Event timing and render reports
+
+An intermediate event at 2.125 seconds in a 24 fps shot occupies frame 51. Events rounding to the same frame, or leaving no room for the following endpoint, fail validation instead of being silently shifted. For a closed 2.5-second shot, 60 displayed frames have timestamps 0 through 59/24; its declared end image is sampled at frame 59. Shared-cut endpoints are supplied by the next shot. `keyframe_timing` reports declared/actual time, frame index and adjustment for each point. Legacy untimed arrays retain their existing interval distribution.
+
+`segment_cache` reports pair-level hit/miss events. Recursive RIFE uses midpoint generation followed by RIFE local-time refinement for non-grid target times, without FFmpeg temporal pixel blending. Reports distinguish the requested strategy and actual backend/fallback.

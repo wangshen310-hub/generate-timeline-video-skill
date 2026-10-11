@@ -58,9 +58,11 @@ frame count.
 
 `recursive` is the default. It builds the smallest power-of-two grid covering
 the shot, generates only RIFE midpoints (`t=0.5`), preserves the exact source
-endpoints, and resamples nearby grid frames to the requested fps. It is slower,
-but it avoids the endpoint reconstruction residual observed with arbitrary
-RIFE v4.6 timesteps.
+endpoints, and evaluates non-grid output times with RIFE between their adjacent
+midpoint-grid images. Encoding uses the target fps directly, with no FFmpeg
+pixel-blending temporal filter. This costs additional inference calls; it avoids
+full-span arbitrary-time endpoint reconstruction and the old resampling ghosts.
+The local-timestep refinement still needs visual QA; it does not guarantee artifact-free motion.
 
 `direct` asks RIFE v4 for every requested arbitrary timestep. It is faster and
 can be selected with `--rife-strategy direct` or a shot-level

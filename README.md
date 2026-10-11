@@ -30,6 +30,16 @@ This Codex skill turns a written timeline into a reproducible MP4 by generating 
 
 渲染器本身只使用 Python 标准库。
 
+## 动作计划、精确时间与检查工具
+
+- 显式中间关键帧按 `floor(at * fps + 0.5)` 定位；过近事件会报错，成片报告列出实际帧号和时间调整。
+- 递归 RIFE 用中点网格及局部时间推理生成目标帧，不再通过 FFmpeg 时域混帧对齐帧率。
+- `plan-motion timeline.json --write` 生成可编辑的动作计划，记录变化对象、状态、保持项、参考图和人工检查状态，适用于角色及非角色内容。
+- `render ... --cache-dir .timeline-cache --command-timeout 300` 保留已验证的片段，按图片、参数、工具和模型内容失效；中断后可复用已完成片段。
+- `inspect final.mp4 --manifest timeline.json --output-dir review-001` 生成相邻图片对照、带帧号的成片抽样、异常位置和本地播放页。检查结果默认待审，不把技术通过当作视觉通过。
+
+缓存是可丢弃的临时资产，不应放在源素材目录。真实 RIFE 运行时仍需单独提供；CI 使用可控的运动边缘推理替身验证时间采样和实际编码结果，不能代替真实模型的视觉质检。
+
 ## 渲染正确性与验证
 
 - `blend` 包含精确的首尾采样；共享 cut 边界使用半开区间，下一镜头提供边界帧。

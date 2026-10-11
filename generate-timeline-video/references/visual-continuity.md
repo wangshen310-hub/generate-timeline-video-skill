@@ -30,3 +30,11 @@ Inspect several in-between frames from each pair and frames immediately before/a
 Intentional holds, anticipation, cuts and abrupt graphic transitions are valid. Assess them against the intended timing and narrative. Check the last-to-first boundary only when a repeating loop is requested; matching endpoint images alone does not prove seamless playback.
 
 Record suspect frame/time locations and their source pairs. Fix incompatible source images, missing motion states or timing first; compare interpolation backends when correspondence causes artifacts. Re-render and inspect the affected interval and its neighbors. Technical probe/decode and temporal metrics complement visual review. If only frame samples were inspected, disclose that normal-speed playback was not verified and avoid claiming natural or smooth motion solely from those samples.
+
+## Executable review workflow
+
+Run `inspect final.mp4 --manifest timeline.json --output-dir review-001` using the renderer. Choose a fresh directory for each run. It checks the manifest against the video, fully decodes it, generates source-pair images, multiple samples per interpolation interval, join neighbors and high temporal-change samples, and creates `index.html` with normal/slow playback. It also creates `report.json` and `review.json` with visual checks explicitly marked `not_reviewed`.
+
+If rendering used an `--interpolation` override, pass the same override to `inspect`. In particular, `--interpolation hold` ignores unused intermediate/end images during both rendering and inspection.
+
+Inspect the page, then record source-pair, intermediate-frame and normal-speed outcomes separately in `review.json`, including issue frame/time, source pair and remedy. Static samples and metrics never automatically promote visual status to passed. Generated PNG samples are full-frame; use additional detail crops for suspected local defects. Re-run inspection into a new directory after repairing the affected source or render. The HTML page is a local review aid, not a claim that playback has been observed.
