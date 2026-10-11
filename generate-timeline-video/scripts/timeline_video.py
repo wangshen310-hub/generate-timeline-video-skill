@@ -2253,7 +2253,9 @@ def command_plan_motion(args: argparse.Namespace) -> int:
 def command_inspect(args: argparse.Namespace) -> int:
     ffmpeg = require_tool("ffmpeg")
     manifest = args.manifest.expanduser().resolve()
-    data, warnings = load_and_validate(manifest, require_files=True)
+    data, warnings = load_and_validate(manifest, require_files=True, interpolation_override=args.interpolation)
+    if args.interpolation:
+        data = dict(data, shots=[dict(shot, interpolation=args.interpolation) for shot in data["shots"]])
     video = args.video.expanduser().resolve()
     probe = probe_video(video)
     failures = output_validation_failures(probe, data)
@@ -2662,6 +2664,7 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("video", type=Path)
     inspect_parser.add_argument("--manifest", type=Path, required=True)
     inspect_parser.add_argument("--output-dir", type=Path, required=True)
+    inspect_parser.add_argument("--interpolation", choices=sorted(INTERPOLATIONS), help="Match an interpolation override used for rendering")
     inspect_parser.set_defaults(handler=command_inspect)
 
     benchmark_parser = subparsers.add_parser(

@@ -202,3 +202,18 @@ class QualityIntegrationTests(unittest.TestCase):
             self.assertTrue((root/'review/index.html').is_file())
             with self.assertRaisesRegex(tv.TimelineError, 'already exists'):
                 tv.command_inspect(args)
+
+    def test_inspection_matches_hold_override_with_unused_missing_images(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            ppm(root/'a.ppm', (100,100,100))
+            data = manifest()  # b.ppm intentionally absent
+            path = root/'timeline.json'; path.write_text(json.dumps(data))
+            with redirect_stdout(io.StringIO()):
+                tv.command_render(tv.build_parser().parse_args(['render',str(path),'--interpolation','hold',
+                                                               '--output',str(root/'held.mp4')]))
+                tv.command_inspect(tv.build_parser().parse_args(['inspect',str(root/'held.mp4'),
+                    '--manifest',str(path),'--interpolation','hold','--output-dir',str(root/'review')]))
+            report = json.loads((root/'review/report.json').read_text())
+            self.assertEqual(report['pairs'], [])
+            self.assertEqual(len(report['keyframe_timing']['one']), 1)
