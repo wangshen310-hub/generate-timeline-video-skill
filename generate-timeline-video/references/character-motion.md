@@ -2,6 +2,8 @@
 
 Read this when generating expressive or articulated character action. Plan the performance before generating images: interpolation connects supplied states and cannot reliably choreograph a blink, ear rebound, or tail swing absent from those states.
 
+Apply the shared [motion-planning.md](motion-planning.md) workflow first. This reference specializes properties to anatomy and performance; it does not replace reference-frame, trajectory, timing or pilot checks. Coordinating more details cannot repair an incoherent primary action.
+
 ## Plan coupled action
 
 For each timed keyframe, describe the primary action and the relevant visible details together:
@@ -11,7 +13,7 @@ For each timed keyframe, describe the primary action and the relevant visible de
 - Ears and tail, when present: orientation, bend and recovery, tied to body acceleration or expression. Keep length, attachment and side consistent; avoid unexplained jumps through the body.
 - Clothing or fur, when relevant: restrained follow-through such as a bandana lifting during a hop and settling after landing.
 
-Choose only details that serve the requested action and can be seen. Intentional stillness is valid. Do not add perpetual blinking or tail movement to every subject. Ensure framing exposes the planned features, and keep the camera/background stable while establishing motion.
+Choose only details that serve the requested action and can be seen. Intentional stillness is valid. Do not add perpetual blinking or tail movement. Expose relevant features in frame and keep the camera/scene relationship consistent. A tracking camera may hold the subject near screen center while the ground moves; do not freeze both by default.
 
 Use the structured `motion_plan` for timed target/state changes and review status, with `prompt` or a prompt record for full generation wording. The renderer ignores this prose. Keep the unchanged identity, wardrobe, palette, lighting and camera in `continuity`; do not freeze eye openness, ear angle or tail position in that invariant block. Derive pose edits from an inspected anchor/reference so expression changes do not become identity changes.
 

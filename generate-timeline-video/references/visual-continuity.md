@@ -23,6 +23,8 @@ Content-specific examples:
 
 Do not demand unchanged lighting or geometry when their transformation is the purpose of the shot. The timeline and generation plan establish the intended change. Split unrelated compositions into shots rather than asking interpolation to reconcile them.
 
+Also compare three or more states against the shared [motion plan](motion-planning.md). Trace the same property in the same reference frame over its actual time intervals. Inspect displacement, direction and rate changes, including intended stops/events; adjacent-pair similarity alone can miss a stall followed by a jump. An inspected image can pass appearance checks while failing the temporal plan. Record that distinction and do not approve the sequence solely from a contact sheet.
+
 ## After rendering: motion and joins
 
 Inspect several in-between frames from each pair and frames immediately before/after keyframe joins and shot transitions. Review the entire clip at normal speed when a player is available; replay suspect intervals slowly. Check trajectories, rhythm, accidental freezes, sudden speed/direction or scale changes, flicker, ghost edges, unstable text and background wobble. For camera motion, follow the horizon and object paths to detect movement restarting at a keyframe join.
@@ -44,5 +46,7 @@ Inspect the page, then record source-pair, intermediate-frame and normal-speed o
 For the three review fields use only `not_reviewed`, `pass` or `revise`. The value `reviewed` describes activity but does not establish acceptance. Each issue should include its frame/time, description, remedy and `resolved: false`; mark it true only after checking the repair. Keep playback `not_reviewed` if a player could not be observed. Do not infer it from successful decoding, a page opening, frame samples or smooth-looking source images.
 
 Run `review-status review-001 --write`. It checks the recorded outcomes, unresolved issues and the SHA256 of the inspection's `preview.mp4`, and updates `report.json`. Exit 0 means `ready_for_delivery`; exit 2 means `needs_review` or `needs_revision`. A replaced video or older report without a hash needs fresh inspection. This checks records and file identity, not the truth of a subjective judgment.
+
+For declared [numeric motion checks](motion-checks.md), inspect also creates a hash-bound `motion-observations.json` template. Measure the relevant output properties rather than copying expected values. Missing measurements block acceptance; observed tolerance/rate violations require revision regardless of visual status strings. These sampled checks do not establish appearance or natural motion. Source/timing/backend/plan changes need fresh affected checks; user-reported playback defects are unresolved `revise` findings until verified after repair.
 
 Deliver unreviewed playback as a **review preview** with the missing check stated, even when the MP4 is technically valid. Known unresolved motion defects require revision rather than a completed-animation claim. An explicitly requested draft or still animatic can still be delivered under that requested scope; do not claim smooth continuous animation for it.

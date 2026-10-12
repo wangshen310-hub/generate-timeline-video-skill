@@ -308,6 +308,160 @@ def motion_plan_errors(shot: dict[str, Any]) -> list[str]:
     return errors
 
 
+def motion_vector(value: Any) -> list[float] | None:
+    if is_number(value):
+        return [float(value)]
+    if isinstance(value, list) and value and all(is_number(v) for v in value):
+        return [float(v) for v in value]
+    return None
+
+
+def motion_rates(samples: list[dict[str, Any]], fps: int) -> dict[str, list[float]]:
+    """Finite differences of annotated values, not pixel tracking or a physics model."""
+    values = [motion_vector(s["value"]) for s in samples]
+    intervals = [(b["frame"] - a["frame"]) / fps for a, b in zip(samples, samples[1:])]
+    velocities = [[(b - a) / dt for a, b in zip(left, right)]
+                  for left, right, dt in zip(values, values[1:], intervals)]
+    accelerations = [math.dist(left, right) / ((dt1 + dt2) / 2)
+                     for left, right, dt1, dt2 in zip(velocities, velocities[1:], intervals, intervals[1:])]
+    return {"speeds": [math.hypot(*v) for v in velocities], "accelerations": accelerations}
+
+
+def motion_limit_failures(check: dict[str, Any], rates: dict[str, list[float]]) -> list[str]:
+    failures = []
+    for limit, metric, minimum in (("min_speed", "speeds", True), ("max_speed", "speeds", False),
+                                    ("max_acceleration", "accelerations", False)):
+        if limit not in check:
+            continue
+        for index, value in enumerate(rates[metric]):
+            bound = check[limit]
+            if (value < bound - 1e-9 if minimum else value > bound + 1e-9):
+                first = check["samples"][index]["frame"]
+                last = check["samples"][index + (2 if metric == "accelerations" else 1)]["frame"]
+                failures.append(f"frames {first}-{last}: {metric}[{index}]={value:.6g} violates {limit}={bound}")
+    return failures
+
+
+def motion_check_errors(shot: dict[str, Any], fps: int, *, composited: bool = False) -> list[str]:
+    """Validate optional, subject-independent numeric expectations for output frames."""
+    if "motion_checks" not in shot:
+        return []
+    checks = shot["motion_checks"]
+    if not isinstance(checks, list) or not checks:
+        return ["motion_checks must be a non-empty array when supplied"]
+    errors, ids, properties = [], set(), set()
+    total = frame_count(float(shot["duration"]), fps)
+    for index, check in enumerate(checks):
+        prefix = f"motion_checks[{index}]"
+        start = len(errors)
+        if not isinstance(check, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        for name in ("id", "target", "property", "space", "unit"):
+            if not isinstance(check.get(name), str) or not check[name].strip():
+                errors.append(f"{prefix}.{name} must be a non-empty string")
+        if len(errors) == start:
+            if check["id"] in ids:
+                errors.append(f"{prefix}.id is duplicated")
+            ids.add(check["id"])
+            identity = tuple(check[k] for k in ("target", "property", "space"))
+            if identity in properties:
+                errors.append(f"{prefix} duplicates target/property/space; reconcile expectations in one track")
+            properties.add(identity)
+        behavior = check.get("behavior")
+        if behavior not in ("constant", "continuous", "event"):
+            errors.append(f"{prefix}.behavior must be constant, continuous or event")
+        tolerance = check.get("tolerance")
+        if not is_number(tolerance) or tolerance < 0:
+            errors.append(f"{prefix}.tolerance must be finite and non-negative")
+        for name in ("min_speed", "max_speed", "max_acceleration"):
+            if name in check:
+                if not is_number(check[name]) or check[name] < 0:
+                    errors.append(f"{prefix}.{name} must be finite and non-negative")
+                if behavior != "continuous":
+                    errors.append(f"{prefix}.{name} applies only to continuous tracks")
+        if all(is_number(check.get(k)) for k in ("min_speed", "max_speed")) and check["min_speed"] > check["max_speed"]:
+            errors.append(f"{prefix}.min_speed exceeds max_speed")
+        samples = check.get("samples")
+        if not isinstance(samples, list) or len(samples) < 2:
+            errors.append(f"{prefix}.samples needs at least two frame/value observations")
+            continue
+        previous, shape = -1, None
+        for sample in samples:
+            if not isinstance(sample, dict):
+                errors.append(f"{prefix}.samples entries must be objects")
+                continue
+            frame, value = sample.get("frame"), motion_vector(sample.get("value"))
+            if type(frame) is not int or not previous < frame < total:
+                errors.append(f"{prefix}.samples frames must increase strictly within 0..{total - 1}")
+            else:
+                previous = frame
+            current_shape = (isinstance(sample.get("value"), list), len(value)) if value else None
+            if value is None or (shape is not None and current_shape != shape):
+                errors.append(f"{prefix}.samples values must be finite scalars or equal-size numeric vectors")
+            shape = shape or current_shape
+        if len(errors) != start:
+            continue
+        if behavior == "constant" and any(motion_vector(s["value"]) != motion_vector(samples[0]["value"]) for s in samples):
+            errors.append(f"{prefix} constant expectation changes; declare the intended behavior instead")
+        rates = motion_rates(samples, fps)
+        errors.extend(f"{prefix} planned {reason}" for reason in motion_limit_failures(check, rates))
+        if "max_acceleration" in check and len(samples) < 3:
+            errors.append(f"{prefix}.max_acceleration needs at least three samples")
+        # A standalone static hold cannot change screen properties. Transitions can.
+        if not composited and interpolation_for(shot) == "hold" and motion_for(shot) == "static" and check["space"] == "screen":
+            if any(math.dist(motion_vector(samples[0]["value"]), motion_vector(s["value"])) > tolerance for s in samples):
+                errors.append(f"{prefix} expects screen changes from a static hold")
+    return errors
+
+
+def assess_motion_checks(checks: list[dict[str, Any]], observations: Any, digest: str, fps: int) -> dict[str, Any]:
+    """Compare explicit measurements with planned values; never invent observations."""
+    pending, revisions, metrics = [], [], []
+    if not isinstance(observations, dict) or observations.get("video_sha256") != digest:
+        return {"status": "needs_review", "reasons": ["motion observations missing or tied to a different video"], "metrics": []}
+    tracks = observations.get("tracks")
+    if not isinstance(tracks, list):
+        return {"status": "needs_review", "reasons": ["motion observations need a tracks array"], "metrics": []}
+    keyed = {}
+    for track in tracks:
+        if not isinstance(track, dict) or not all(isinstance(track.get(k), str) for k in ("shot", "id")):
+            pending.append("motion observation track needs shot/id strings")
+            continue
+        key = (track["shot"], track["id"])
+        if key in keyed:
+            pending.append(f"duplicate motion observations for {key}")
+        keyed[key] = track
+    expected = {(c["shot"], c["id"]) for c in checks}
+    if set(keyed) - expected:
+        pending.append("motion observations include unknown tracks; use this inspection's template")
+    for check in checks:
+        label = f"{check['shot']}/{check['id']}"
+        samples = keyed.get((check["shot"], check["id"]), {}).get("samples")
+        plan = check["samples"]
+        if (not isinstance(samples, list) or len(samples) != len(plan) or
+                any(not isinstance(s, dict) or type(s.get("frame")) is not int or s["frame"] != p["frame"]
+                    for s, p in zip(samples, plan))):
+            pending.append(f"{label}: missing or mismatched sample frames")
+            continue
+        valid = True
+        for sample, target in zip(samples, plan):
+            measured, desired = motion_vector(sample.get("value")), motion_vector(target["value"])
+            if (measured is None or len(measured) != len(desired) or
+                    isinstance(sample.get("value"), list) != isinstance(target["value"], list)):
+                pending.append(f"{label} frame {sample['frame']}: measure the declared property; value is missing or invalid")
+                valid = False
+            elif math.dist(measured, desired) > check["tolerance"] + 1e-9:
+                revisions.append(f"{label} frame {sample['frame']}: deviation exceeds tolerance {check['tolerance']}")
+        if valid:
+            rates = motion_rates(samples, fps)
+            metrics.append({"shot": check["shot"], "id": check["id"], **rates})
+            revisions.extend(f"{label}: {reason}" for reason in motion_limit_failures(check, rates))
+    return {"status": "needs_revision" if revisions else "needs_review" if pending else "pass",
+            "reasons": revisions + pending, "metrics": metrics,
+            "basis": "Supplied numeric measurements only; no automatic image tracking or visual certification"}
+
+
 def shot_timing(shot: dict[str, Any], fps: int, include_endpoint: bool = True) -> list[dict[str, Any]]:
     if interpolation_for(shot) == "hold":
         return [{"image": shot["start_image"], "declared_at": 0, "frame": 0, "actual_at": 0, "error_seconds": 0}]
@@ -542,6 +696,13 @@ def load_and_validate(
                     warnings.append(f"{prefix}.motion_plan still needs visual review; technical validation is not approval")
             except (TimelineError, KeyError, TypeError, ValueError):
                 errors.append(f"{prefix}.motion_plan cannot be matched to invalid keyframe slots")
+
+        if is_number(duration) and duration > 0:
+            incoming = index > 0 and isinstance(shots[index - 1], dict) and transition_for(shots[index - 1])[0] != "cut"
+            outgoing = index < len(shots) - 1 and transition_for(shot)[0] != "cut"
+            errors.extend(f"{prefix}.{error}" for error in
+                          motion_check_errors(dict(shot, interpolation=interpolation), fps,
+                                              composited=bool(incoming or outgoing)))
 
         if interpolation in {"optical-flow", "rife"}:
             for (first_label, first_path), (second_label, second_path) in zip(
@@ -2273,8 +2434,13 @@ def command_inspect(args: argparse.Namespace) -> int:
     deduplicated = shared_cut_boundaries(data, manifest.parent)
     samples = {0, total - 1}
     pairs, timing, offset = [], {}, 0
+    motion_checks = []
     sources: dict[str, str] = {}
     for index, shot in enumerate(data["shots"]):
+        for check in shot.get("motion_checks", []):
+            mapped = dict(check, shot=shot["id"], samples=[dict(s, frame=offset + s["frame"]) for s in check["samples"]])
+            motion_checks.append(mapped)
+            samples.update(s["frame"] for s in mapped["samples"])
         points = shot_timing(shot, fps, index not in deduplicated)
         timing[shot["id"]] = points
         for point in points:
@@ -2317,6 +2483,13 @@ def command_inspect(args: argparse.Namespace) -> int:
               "video_sha256": file_digest(directory / "preview.mp4").hex(),
               "keyframe_timing": timing, "pairs": pairs, "sample_frames": ordered,
               "benchmark": benchmark, "warnings": warnings}
+    if motion_checks:
+        report.update(motion_checks=motion_checks, motion_fps=fps,
+                      manifest_sha256=file_digest(manifest).hex())
+        observations = {"video_sha256": report["video_sha256"], "tracks": [
+            {"shot": c["shot"], "id": c["id"], "samples": [
+                {"frame": s["frame"], "value": None} for s in c["samples"]]} for c in motion_checks]}
+        write_json_atomic(directory / "motion-observations.json", observations)
     write_json_atomic(directory / "report.json", report)
     source_html = "".join(f'<figure><img src="{name}"><figcaption>{html.escape(Path(source).name)}</figcaption></figure>'
                           for source, name in sources.items())
@@ -2334,7 +2507,9 @@ def command_inspect(args: argparse.Namespace) -> int:
             '<select onchange="document.getElementById(\'preview\').playbackRate=Number(this.value)">'
             '<option value="1">1×</option><option value="0.5">0.5×</option><option value="0.25">0.25×</option></select></p>'
             '<p>Record source-pair, intermediate-frame and playback findings separately in review.json as not_reviewed/pass/revise, '
-            'with frame numbers, remedies and resolved flags for issues. Run review-status before delivery.</p>'
+            'with frame numbers, remedies and resolved flags for issues. When motion-observations.json exists, '
+            'measure the declared properties from the output; null values are unreviewed. '
+            'Run review-status before delivery.</p>'
             f'<h2>Source images</h2><div class="grid">{source_html}</div><h2>Adjacent pairs</h2><ol>{pair_html}</ol>'
             f'<h2>Rendered samples</h2><div class="grid">{frame_html}</div>')
     (directory / "index.html").write_text(page, encoding="utf-8")
@@ -2343,7 +2518,8 @@ def command_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
-def assess_review(report: dict[str, Any], review: dict[str, Any], digest: str) -> dict[str, Any]:
+def assess_review(report: dict[str, Any], review: dict[str, Any], digest: str,
+                  observations: Any = None) -> dict[str, Any]:
     pending, revisions = [], []
     if report.get("technical") != "passed":
         pending.append("technical checks have not passed")
@@ -2362,8 +2538,16 @@ def assess_review(report: dict[str, Any], review: dict[str, Any], digest: str) -
         for index, issue in enumerate(issues):
             if not isinstance(issue, dict) or issue.get("resolved") is not True:
                 revisions.append(f"issue {index + 1} remains unresolved")
+    motion = None
+    if report.get("motion_checks"):
+        motion = assess_motion_checks(report["motion_checks"], observations, digest, report["motion_fps"])
+        if motion["status"] == "needs_revision":
+            revisions.extend(motion["reasons"])
+        elif motion["status"] != "pass":
+            pending.extend(motion["reasons"])
     status = "needs_revision" if revisions else "needs_review" if pending else "ready_for_delivery"
     return {"delivery_status": status, "reasons": revisions + pending,
+            "motion_audit": motion,
             "basis": "Recorded human/agent review of the inspected video; not automated visual certification"}
 
 
@@ -2377,7 +2561,14 @@ def command_review_status(args: argparse.Namespace) -> int:
         raise TimelineError(f"Cannot read inspection/review files: {exc}") from exc
     if not isinstance(report, dict) or not isinstance(review, dict):
         raise TimelineError("report.json and review.json must contain objects")
-    result = assess_review(report, review, digest)
+    observations = None
+    observation_path = directory / "motion-observations.json"
+    if report.get("motion_checks") and observation_path.exists():
+        try:
+            observations = json.loads(observation_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise TimelineError(f"Cannot read motion observations: {exc}") from exc
+    result = assess_review(report, review, digest, observations)
     if args.write:
         report.update(result, review=review)
         write_json_atomic(directory / "report.json", report)
