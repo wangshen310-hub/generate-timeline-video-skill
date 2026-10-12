@@ -1,110 +1,59 @@
 ---
 name: generate-timeline-video
-description: Create short videos from a written timeline by planning shots, generating continuity-aware AI keyframes, interpolating each image pair into exact-frame-rate motion, assembling transitions, and muxing optional audio into an MP4. Use when Codex is asked to generate a video, animate still images, turn a script or storyboard into video, create an animatic, synthesize in-between frames, or build a timeline-based MP4; also trigger for Chinese requests involving 视频、分镜、关键帧、插帧、补帧, or 图片生成视频.
+description: Create animated GIFs from an ordered sequence of still images, using image generation or supplied pictures, explicit per-frame timing, palette encoding, loop planning, and output verification. Use for 静帧生成GIF、图片序列动画、逐帧动图 and storyboard-to-GIF requests. The historical skill name is retained for compatibility.
 ---
 
-# Generate Timeline Video
+# Still Images to GIF
 
-Turn a narrative timeline into a reproducible video project. Use image generation for visual content and the bundled FFmpeg pipeline for deterministic frame interpolation, transitions, encoding, and verification.
+Create a reproducible frame-by-frame GIF. Each supplied still becomes one displayed frame with an explicit duration. The default output is GIF, not MP4. Do not invoke RIFE, optical flow, LTX, pixel blending, or automatic in-between generation in this workflow. GIF encoding does not itself make sparse poses move naturally.
 
-## Set expectations
+The directory and invocation name remain `generate-timeline-video` for existing installations. The previous MP4 workflow is retained in [legacy-video-workflow.md](references/legacy-video-workflow.md), only for an explicit request to use that older pipeline. Its interpolation planning, fps rules and review commands do not apply to GIF manifests.
 
-- Treat generated images as keyframes, not as 24 independently generated frames per second. Independent generations flicker and lose identity.
-- Describe `blend` as pixel blending and `optical-flow` as motion estimation. Never claim either method reconstructs physically correct hidden motion.
-- Preserve the requested temporal continuity. Add intermediate states for a continuous event; split shots when the narrative or viewpoint calls for a cut, not merely because interpolation is difficult.
-- Default to 1280x720, 24 fps, H.264 MP4, 2-4 seconds per shot, and no audio unless the request says otherwise.
-- Keep provided demo media fixed when it is being used as a regression benchmark; improve the code before changing the test input.
-- Keep every generated or copied artifact inside the user's chosen project directory.
+## 1. Plan the actual displayed frames
 
-## Run the workflow
+Start with a short, meaningful animation or complete cycle. Use a 512-pixel longest edge, preserving the requested aspect ratio, and 100 ms per image as an initial practical setting. Adjust timing to the action, not a mandatory frame rate. A typical initial pilot has 8–16 distinct states; this is a workload suggestion, not a quality guarantee. A supplied sequence can use its existing length and dimensions. Keep all assets inside the chosen project directory.
 
-### 1. Check the local renderer
+Record what changes, what stays fixed and the reference frame (screen, scene or another object). Plan each displayed state and duration before bulk image generation. Include anticipation, contact, reversals, peaks and settling where relevant. For non-character scenes, track relevant shape, position, light, material, water, smoke or other changes. Do not insert eyes, ears or anatomy checks into scenes that lack them.
 
-Locate this skill directory, then set `SCRIPT` to `scripts/timeline_video.py` inside it. Resolve the Python interpreter by preferring `python3` and falling back to `python`, then set `PYTHON` to that command. Confirm that FFmpeg and FFprobe are available. If a task-local FFmpeg `bin` directory already exists, add it only to the current process PATH; otherwise ask for a path or installation authorization. Do not install packages silently; the default renderer uses only Python's standard library and FFmpeg. RIFE is optional, uses an external executable plus model, and must not be downloaded silently. Read [references/interpolation-backends.md](references/interpolation-backends.md) before enabling it.
+For characters or animals, coordinate the primary action with relevant gaze, head, ears, tail, limbs and contact. Secondary motion can lag the main motion; it need not change in every frame. Keep intentional stillness. Resolve contradictory constraints, such as screen-fixed scenery paired with a tracking camera.
 
-### 2. Create the project and timeline
+For looping motion, plan a complete cycle and inspect last → first as another adjacent step. Normally omit a duplicate first pose at the end: its extra exposure creates a pause. Keep an endpoint hold only when intentional. Do not reverse the sequence automatically: ping-pong playback can reverse gravity, contact, smoke or other one-way processes. For a non-looping event, set `loop: false` unless the user requests a designed reset.
 
-Read [references/timeline-schema.md](references/timeline-schema.md) when authoring or repairing `timeline.json`.
+## 2. Create the manifest
 
-Initialize a safe project skeleton:
+Locate `scripts/still_gif.py` in this skill directory. Use Python 3.10+ and FFmpeg already available on PATH. The script uses only Python's standard library; no RIFE or generative video model is required. If FFmpeg is missing, resolve an existing installation before proposing installation.
 
-```bash
-"$PYTHON" "$SCRIPT" init <project-dir> --title "<title>" --shots 1 --shot-duration 3 --size 1280x720 --fps 24
+```text
+python <skill-dir>/scripts/still_gif.py init <project-dir> --frames 12
+python <skill-dir>/scripts/still_gif.py validate <project-dir>/gif.json --allow-missing
 ```
 
-Translate the request into contiguous shots with a visual purpose. Put generation instructions in `prompt` and actual invariant facts in `continuity`. Declare `subject_motion` from the required change (`none`, `slow` or `articulated`); it is a sampling hint, not a classification of what is visible. A camera-only move or still can use one image.
+Read [gif-schema.md](references/gif-schema.md) for explicit timing, loop settings and commands. Fill each frame's `state` and `prompt` with the actual intended change. The initializer creates slots, not motion. Never silently reuse a video `timeline.json` as a GIF manifest.
 
-For every shot, read [references/motion-planning.md](references/motion-planning.md) before choosing timing or generating images. Identify relevant properties, their reference frames (screen, scene or another object), and whether each is constant, continuous or an event. Plan paths/extent, timing and coupled relationships; choose evidence that would show whether generated output meets the intent. Reconcile contradictions in the assembled prompt, including invariants. Scale this plan to the shot; a still does not need artificial motion. Where numeric measurements are meaningful, read [references/motion-checks.md](references/motion-checks.md) and declare optional `motion_checks` before rendering.
+## 3. Generate or collect still frames
 
-```bash
-"$PYTHON" "$SCRIPT" plan-keyframes <project-dir>/timeline.json --write
+Use supplied images when requested. Otherwise use the available image-generation capability, following its applicable instructions, rather than drawing replacement artwork in Python.
+
+- Establish an inspected anchor for appearance, style, composition and any fixed background.
+- Use the preceding accepted frame for progression and the anchor for identity when references are supported. Anchor-only references do not establish temporal motion.
+- Generate small incremental state changes with consistent framing. Every displayed pose must exist as an actual source image; the encoder will not invent missing poses.
+- Review each image and windows of at least three consecutive states. Check shape, placement, scale, palette, background stability, displacement per interval and appropriate coupled details. For a loop, include the closing window.
+- Fix accidental drift, geometry errors and missing events in the source sequence. If transitions jump, add or redraw the necessary displayed states and adjust exposure times. Repeating a frame changes its hold duration, not its motion smoothness.
+
+Render a representative complete cycle or event before expanding an expensive sequence. If generation costs are excessive, shorten or simplify the action within the user's intent rather than silently changing to a video model or interpolator.
+
+## 4. Encode and verify
+
+```text
+python <skill-dir>/scripts/still_gif.py validate <project-dir>/gif.json
+python <skill-dir>/scripts/still_gif.py render <project-dir>/gif.json --output <project-dir>/output/final.gif
+python <skill-dir>/scripts/still_gif.py probe <project-dir>/gif.json --output <project-dir>/output/final.gif
 ```
 
-This writes explicit `at` times and deterministic placeholder paths. Choose the representative pilot before generating the full list; the renderer is downstream of the temporal plan. Validate planned structure with `validate timeline.json --allow-missing` before spending on generation.
+Encoding fits images to the canvas without cropping, flattens transparency onto white, builds a shared palette and uses fixed ordered dithering. If the design requires a transparent GIF or another background treatment, prepare compatible source artwork or extend the renderer explicitly; do not claim transparency is preserved. GIF has at most 256 palette colors and no audio.
 
-After planning slots, run `plan-motion timeline.json --write` for structured records for any subject. Fill target/state changes, reference frame, invariants and reference image; keep review pending until inspecting actual assets. `plan-keyframes` creates slots, not action decisions. Keep changing properties out of `continuity`.
+The script verifies GIF dimensions, frame count, every frame delay, total duration and loop extension, then performs full FFmpeg decoding before atomic publication. Without `--force`, existing or concurrently created output is protected. `--force` allows replacement only after verification; sources and manifest remain protected. Commands emit JSON; failures return nonzero. These are technical checks, not a visual assessment.
 
-For character/animal action, additionally read [references/character-motion.md](references/character-motion.md). Couple the primary action to relevant expression and secondary motion (eyes/gaze, head, ears, tail or clothing when present). Animate only details that serve the scene; intentional stillness is valid.
+Open the final GIF in a viewer that plays animation, inspect at its intended speed and watch at least two loops when looping. Check discontinuities, unintended pauses, palette flicker/banding, detail loss and the closing step. Frame sheets alone cannot establish playback quality. If playback cannot be inspected, label the delivery as a technically verified preview awaiting playback review. Do not expand a failed pilot and call it accepted.
 
-Planning checks the frame budget before writing. Increase duration/fps or relax the gap if the requested semantic poses cannot fit. Repeated planning preserves full time precision and is idempotent; generated paths avoid existing assets and referenced names.
-
-### 3. Choose interpolation and test a representative span
-
-- Use `hold` for one image, freeze frames, or a still with optional camera motion.
-  Only the start image is read, including when `--interpolation hold` overrides a shot; unused intermediate/end images and their timing are ignored.
-- Use `blend` when pixel mixing is the intended change, such as a dissolve or some lighting/abstract transitions. A moving label or rigid graphic may visibly ghost; choose by property behavior rather than the subject category.
-- Use `optical-flow` for modest displacement with stable, textured correspondences. Use `hold` plus a camera preset only when that transform satisfies the requested motion; it cannot replace object deformation or independent movement.
-- Use separate shots for intended cuts or unrelated compositions. Within continuous events, plan intermediate states for large changes, entry, occlusion or disappearance. Before scaling a new motion setup, test a representative span with the intended backend as described in [motion-planning.md](references/motion-planning.md): a multi-state window, complete cycle or critical event as appropriate. This applies to all subjects. Expand only after source continuity and rendered motion pass; static/simple verified setups can use the shot itself as the test. If playback is unavailable or correspondence remains unsuitable, retain a limited pilot preview and state the gap. Do not substitute an unrequested freeze/cut or switch production systems to hide failure.
-
-- Keep the `balanced` optical-flow profile as the default. Treat `large-motion` as experimental and compare its output visually because wider search can create tearing or duplicated anatomy.
-- Use optional `rife` for larger or articulated motion only when the user has an available RIFE ncnn Vulkan executable and v4 model. Prefer its `recursive` midpoint strategy for stable endpoints; use `direct` only when faster rendering is worth extra endpoint QA. It falls back to optical flow and then blend unless `--strict` is set.
-Camera motion presets are `static`, `zoom-in`, `zoom-out`, `pan-left`, `pan-right`, `pan-up`, and `pan-down`. The pan name describes the camera viewport, so foreground content appears to travel in the opposite direction. These are compositional moves, not 3D scene reconstruction.
-For multiple keyframes, interpolation segments are joined before camera motion is applied across the whole shot.
-
-### 4. Generate and expand accepted keyframes
-
-Use the available image-generation capability rather than drawing frames in Python. Apply these instructions first to the pilot selected in step 3, then expand only after its source and output review passes. Use a small pilot manifest referencing its selected states so ungenerated production assets do not block the test.
-
-1. Generate the first appearance of each recurring character, object, and location as an anchor.
-2. Use the inspected preceding image for temporal progression and the anchor for identity whenever supported. If choosing one reference, inspect the role it cannot enforce. Anchor reuse alone does not establish a continuous trajectory.
-3. Repeat only actual invariants in the continuity block. Identity, wardrobe, palette, lens or time of day belong there only while intended to remain fixed. Keep changing lighting, viewpoint and other planned changes in timed instructions.
-4. Ask for clean full-frame imagery without captions, watermarks, borders, or UI unless those are intentional.
-5. Inspect every image. Regenerate identity drift, accidental text, malformed anatomy, or discontinuous geometry before rendering.
-6. Save files at the exact paths recorded in `timeline.json`.
-
-Check each keyframe against its timed motion plan, including visible eyes, ears, tail, head, limb contacts, and silhouette as applicable. A new paw pose alone is insufficient when the requested performance also needs expression or secondary motion. Keep those features in frame, and regenerate missing or inconsistent changes before interpolation. Add timed images at short events such as eye closure/reopening or an ear/tail reversal when the existing slots would miss them; the 0.25-second default is a maximum gap, not a guarantee of adequate event sampling.
-
-For every project, read [references/visual-continuity.md](references/visual-continuity.md). Compare images to the plan, adjacent pairs and three-or-more-state windows: follow the same properties through time, including their displacement per interval and changes in speed. Distinguish planned changes from drift in geometry, appearance, lighting and reference frame. Select only relevant checks; products, landscapes, abstract imagery and text do not need character anatomy. A per-image `pass` does not establish temporal acceptance.
-
-Keep adjacent optical-flow keyframes close in composition. For articulated motion, put distinct pose images at explicit `at` times in `intermediate_images`; RIFE cannot invent a footstep when supplied poses keep the same leg configuration. Default to at most 0.25 seconds between semantic poses for articulated action and up to 1 second for slow subject motion. Rapidly deforming effects require an explicit, event-based `max_keyframe_gap` and closer samples around onset, peak or disappearance; being non-character content does not make them static. The current schema has no separate effects class: when `subject_motion: "none"` is used for effects, supply the explicit gap and motion plan. A gap check passing only checks spacing. If validation reports a motion-gap warning, rerun `plan-keyframes --write` and generate every missing state before rendering.
-
-### 5. Validate before rendering
-
-```bash
-"$PYTHON" "$SCRIPT" validate <project-dir>/timeline.json
-```
-
-Resolve every reported error. Treat frame-rounding notices as intentional only after checking timing. The renderer rounds durations to whole frames and places explicit intermediate times at `round(at * fps)` (half up). Events colliding on a frame are rejected. A closed shot's end image occupies its last displayed frame; the timing report distinguishes this endpoint adjustment from intermediate event timing.
-Treat a warning that adjacent optical-flow/RIFE keyframes are byte-identical as a possible missing-motion input: check whether stillness is intended and represented correctly. `dense-running-test/` is a fixed sampling/renderer regression fixture, not a guarantee of natural motion or a production recipe.
-
-### 6. Render and verify
-
-```bash
-"$PYTHON" "$SCRIPT" render <project-dir>/timeline.json --output <project-dir>/output/final.mp4 --cache-dir <project-dir>/.timeline-cache --command-timeout 300
-"$PYTHON" "$SCRIPT" probe <project-dir>/output/final.mp4 --manifest <project-dir>/timeline.json
-"$PYTHON" "$SCRIPT" inspect <project-dir>/output/final.mp4 --manifest <project-dir>/timeline.json --output-dir <project-dir>/review-001
-```
-
-When the project has a fixed demo or prior render, run `benchmark <candidate> --baseline <baseline>`. Treat its temporal-luma and near-duplicate metrics as regression signals, not a replacement for visual inspection; a candidate may have more semantic motion while also having a larger luma jerk.
-
-The renderer reports the actual backend, RIFE strategy, and optical-flow profile. Failed RIFE falls back to optical flow, then failed optical flow falls back to `blend`. Pass `--strict` when any fallback is unacceptable. A candidate is probed before atomically replacing the output, and source media paths are protected even with `--force`.
-
-Use an `.mp4` output path. Publication follows geometry, frame count/rate, video/container duration, audio and full-decode checks. Without `--force`, publication refuses an output created by another process during rendering. JSON results are on stdout and progress/command logs are on stderr. Image normalization is cached only within a render; pure cuts use stream-copy while transitions require encoding.
-
-Open the review page for sources, timestamped samples, joins and normal/slow playback. Check the final assembly against the plan, including new joins/camera transforms; pilot approval does not cover later changes. Apply [references/visual-continuity.md](references/visual-continuity.md) to all subjects. Record `not_reviewed`, `pass` or `revise` in `review.json` with observations, locations and unresolved issues. When `motion_checks` are declared, fill `motion-observations.json` from actual output measurements; expectations are never observations. Run `review-status <project-dir>/review-001 --write`: missing measurements/playback remain pending, and observed violations require revision. User-reported playback failure stays `revise` until repaired and reviewed. If playback is unavailable, deliver only a clearly labeled preview. These checks do not automatically judge natural motion.
-
-The optional cache retains verified pair clips across runs, keyed by source bytes, timing, geometry, effective interpolation settings, renderer/tool/model contents and GPU selection. Source edits or settings changes invalidate affected pairs; camera motion is reapplied over the whole shot. Failed or degraded fallback clips are not cached. Rerun the same command after interruption to reuse completed pairs. The cache is disposable and can grow; put it in a task-owned directory outside source assets. Each external render command has a configurable timeout; no automatic infinite retry is performed.
-
-## Preserve reproducibility
-
-Return the MP4 together with `timeline.json` and the keyframes. Keep prompt and continuity fields in the manifest even though the renderer ignores them. State the actual interpolation backend/profile, de-duplicated cut boundaries, any fallback, reported keyframe timing adjustments, cache reuse, missing audio, or intentional limitation in the handoff.
+Deliver `final.gif`, `gif.json` and the source images. Report dimensions, frame count, total duration, loop behavior and any remaining visual limitation. Preserve frame prompts and timing for revision. Do not claim that high frame count or a valid file proves natural motion.

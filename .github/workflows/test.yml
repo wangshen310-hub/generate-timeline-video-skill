@@ -22,7 +22,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Run tests
+      - name: Run GIF and legacy video unit and FFmpeg integration tests
         run: python -m unittest discover -s tests -v
       - name: Validate demo manifest
         run: python generate-timeline-video/scripts/timeline_video.py validate seaside-running-test/timeline.json
