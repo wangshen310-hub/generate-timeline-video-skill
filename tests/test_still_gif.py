@@ -9,7 +9,7 @@ import unittest
 import zlib
 from unittest import mock
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'generate-timeline-video/scripts/still_gif.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'pic2gif/scripts/still_gif.py'
 spec = importlib.util.spec_from_file_location('still_gif', SCRIPT)
 gif = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gif)

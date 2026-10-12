@@ -15,7 +15,7 @@ Resolve `python3`/`python`, put FFmpeg and FFprobe on `PATH`, and keep the
 RIFE executable/model outside the repository:
 
 ```bash
-SCRIPT=generate-timeline-video/scripts/timeline_video.py
+SCRIPT=pic2gif/scripts/timeline_video.py
 python3 "$SCRIPT" validate seaside-running-motion-test/timeline.json
 python3 "$SCRIPT" render seaside-running-motion-test/timeline.json \
   --output seaside-running-motion-test/output/rife-recursive.mp4 \

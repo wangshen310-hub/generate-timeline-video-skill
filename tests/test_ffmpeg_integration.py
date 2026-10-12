@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "generate-timeline-video" / "scripts" / "timeline_video.py"
+SCRIPT = ROOT / "pic2gif" / "scripts" / "timeline_video.py"
 
 
 def write_ppm(path: Path, color: tuple[int, int, int]) -> None:

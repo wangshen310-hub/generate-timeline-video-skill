@@ -10,7 +10,7 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "generate-timeline-video" / "scripts" / "timeline_video.py"
+SCRIPT = ROOT / "pic2gif" / "scripts" / "timeline_video.py"
 SPEC = importlib.util.spec_from_file_location("timeline_video", SCRIPT)
 assert SPEC and SPEC.loader
 timeline_video = importlib.util.module_from_spec(SPEC)

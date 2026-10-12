@@ -9,18 +9,18 @@ while the feet keep the same pose.
 The manifest was scaffolded by the renderer itself:
 
 ```bash
-python generate-timeline-video/scripts/timeline_video.py plan-keyframes dense-running-test/timeline.json --write
+python pic2gif/scripts/timeline_video.py plan-keyframes dense-running-test/timeline.json --write
 ```
 
 Validate and render with an explicitly supplied RIFE v4 runtime:
 
 ```bash
-python generate-timeline-video/scripts/timeline_video.py validate dense-running-test/timeline.json
-python generate-timeline-video/scripts/timeline_video.py render dense-running-test/timeline.json \
+python pic2gif/scripts/timeline_video.py validate dense-running-test/timeline.json
+python pic2gif/scripts/timeline_video.py render dense-running-test/timeline.json \
   --output dense-running-test/output/dense-running-rife.mp4 \
   --rife-executable /path/to/rife-ncnn-vulkan \
   --rife-model /path/to/rife-v4.6 --rife-strategy recursive --strict
-python generate-timeline-video/scripts/timeline_video.py probe \
+python pic2gif/scripts/timeline_video.py probe \
   dense-running-test/output/dense-running-rife.mp4 \
   --manifest dense-running-test/timeline.json
 ```

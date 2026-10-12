@@ -1,0 +1,4 @@
+interface:
+  display_name: "pic2gif"
+  short_description: "将连续静帧按动作节奏与逐帧时长合成为 GIF，并检查循环衔接和画面一致性"
+  default_prompt: "使用 $pic2gif 规划连续静帧，制作逐帧 GIF 动图并检查播放与循环衔接。"
