@@ -47,7 +47,7 @@ OpenCV 的独立检查中，recursive 版本为 72/72 解码帧、0 个 MAD<0.5 
 ## 复现
 
 ```bash
-SCRIPT=generate-timeline-video/scripts/timeline_video.py
+SCRIPT=pic2gif/scripts/timeline_video.py
 
 python3 "$SCRIPT" validate seaside-running-test/timeline.json
 

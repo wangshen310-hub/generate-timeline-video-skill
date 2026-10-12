@@ -40,7 +40,7 @@ Windows when `python3` is not available. Resolve FFmpeg/FFprobe similarly.
 On Unix-like systems:
 
 ```bash
-python3 generate-timeline-video/scripts/timeline_video.py render timeline.json \
+python3 pic2gif/scripts/timeline_video.py render timeline.json \
   --interpolation rife \
   --rife-executable /path/to/rife-ncnn-vulkan \
   --rife-model /path/to/rife-v4.6 \

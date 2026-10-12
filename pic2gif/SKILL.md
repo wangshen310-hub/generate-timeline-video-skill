@@ -1,13 +1,13 @@
 ---
-name: generate-timeline-video
-description: Create animated GIFs from an ordered sequence of still images, using image generation or supplied pictures, explicit per-frame timing, palette encoding, loop planning, and output verification. Use for 静帧生成GIF、图片序列动画、逐帧动图 and storyboard-to-GIF requests. The historical skill name is retained for compatibility.
+name: pic2gif
+description: Create animated GIFs from an ordered sequence of still images, using image generation or supplied pictures, explicit per-frame timing, palette encoding, loop planning, and output verification. Use for 静帧生成GIF、图片序列动画、逐帧动图 and storyboard-to-GIF requests.
 ---
 
-# Still Images to GIF
+# pic2gif
 
 Create a reproducible frame-by-frame GIF. Each supplied still becomes one displayed frame with an explicit duration. The default output is GIF, not MP4. Do not invoke RIFE, optical flow, LTX, pixel blending, or automatic in-between generation in this workflow. GIF encoding does not itself make sparse poses move naturally.
 
-The directory and invocation name remain `generate-timeline-video` for existing installations. The previous MP4 workflow is retained in [legacy-video-workflow.md](references/legacy-video-workflow.md), only for an explicit request to use that older pipeline. Its interpolation planning, fps rules and review commands do not apply to GIF manifests.
+The skill directory and invocation name are `pic2gif`. The previous MP4 workflow is retained in [legacy-video-workflow.md](references/legacy-video-workflow.md), only for an explicit request to use that older pipeline. Its interpolation planning, fps rules and review commands do not apply to GIF manifests.
 
 ## 1. Plan the actual displayed frames
 

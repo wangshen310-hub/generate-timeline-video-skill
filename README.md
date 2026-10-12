@@ -1,8 +1,8 @@
-# 静帧 GIF 生成 Skill
+# pic2gif
 
 将用户提供或 AI 生成的静帧按顺序和停留时长合成为 GIF。每一张图就是实际显示的一帧，不使用 RIFE、光流、LTX 或混帧来生成中间动作。
 
-仓库及调用名 `generate-timeline-video` 保持兼容；默认工作流已改为 GIF。旧视频渲染器与回归用例保留，只有明确要求旧 MP4 流程时才使用。
+技能目录与调用名为 `pic2gif`，默认输出 GIF。旧视频渲染器与回归用例保留，只有明确要求旧 MP4 流程时才使用。
 
 ## 工作方式
 
@@ -18,21 +18,21 @@ GIF 不会自动让稀疏动作变顺。缺失的姿态需要制作出来；重�
 依赖 Python 3.10+、FFmpeg，以及需要生成素材时的图像生成能力。Python 无第三方包依赖。
 
 ```text
-python generate-timeline-video/scripts/still_gif.py init my-gif --frames 12
+python pic2gif/scripts/still_gif.py init my-gif --frames 12
 # 填写 gif.json 中的状态和提示词，生成 images/ 中的图片。
-python generate-timeline-video/scripts/still_gif.py validate my-gif/gif.json
-python generate-timeline-video/scripts/still_gif.py render my-gif/gif.json --output my-gif/final.gif
-python generate-timeline-video/scripts/still_gif.py probe my-gif/gif.json --output my-gif/final.gif
+python pic2gif/scripts/still_gif.py validate my-gif/gif.json
+python pic2gif/scripts/still_gif.py render my-gif/gif.json --output my-gif/final.gif
+python pic2gif/scripts/still_gif.py probe my-gif/gif.json --output my-gif/final.gif
 ```
 
-- [技能工作流](generate-timeline-video/SKILL.md)
-- [GIF 清单格式与时间精度](generate-timeline-video/references/gif-schema.md)
-- [旧 MP4 工作流](generate-timeline-video/references/legacy-video-workflow.md)
+- [技能工作流](pic2gif/SKILL.md)
+- [GIF 清单格式与时间精度](pic2gif/references/gif-schema.md)
+- [旧 MP4 工作流](pic2gif/references/legacy-video-workflow.md)
 
-将 `generate-timeline-video` 文件夹复制到自己的 Codex skills 目录，然后调用：
+将 `pic2gif` 文件夹复制到自己的 Codex skills 目录，然后调用：
 
 ```text
-使用 $generate-timeline-video 制作一个由连续静帧组成的 GIF 动图。
+使用 $pic2gif 制作一个由连续静帧组成的 GIF 动图。
 ```
 
 ## 验证
