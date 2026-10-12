@@ -45,7 +45,7 @@ Use UTF-8 JSON. Resolve all relative media paths from the directory containing `
         "type": "cut",
         "duration": 0
       },
-      "prompt": "The train enters from frame left while the traveler remains beside the red suitcase",
+      "prompt": "Camera pans across the stationary train and traveler beside the red suitcase",
       "continuity": "Same traveler, navy coat, red suitcase, blue-hour rain, realistic cinematic photography, 16:9"
     }
   ],
@@ -87,6 +87,7 @@ Use UTF-8 JSON. Resolve all relative media paths from the directory containing `
 | `max_keyframe_gap` | no | Positive maximum seconds between semantic keyframes; overrides the motion-class default. |
 | `transition_to_next` | no | Transition beginning near this shot's end. Defaults to a cut. |
 | `motion_plan` | no | Structured per-keyframe action and review records; see below. |
+| `motion_checks` | no | Numeric output-property expectations and optional rate limits; see [motion-checks.md](motion-checks.md). |
 | `prompt` | no | Image-generation instruction retained for reproducibility. |
 | `continuity` | no | Invariants copied unchanged across related keyframe prompts. |
 
@@ -169,12 +170,14 @@ Each optional shot-level `motion_plan` entry has:
   "image": "keyframes/pose-02.png",
   "reference_image": "keyframes/pose-01.png",
   "changes": [{"target": "image-right glove", "state": "half extension, same shoulder attachment"}],
-  "keep": ["planted hind paws", "character identity", "camera and background"],
+  "keep": ["character identity", "contact paw fixed relative to floor during support", "scene layout in scene coordinates"],
   "review": "pending"
 }
 ```
 
 The example is one entry, not a complete plan: a plan must match every ordered image/time slot. `changes` contains target/state strings, `keep` contains invariant strings, `reference_image` identifies the generation reference and `review` is pending/pass/revise. Validation checks structure and correspondence, not whether image pixels satisfy the prose. Pending/revise records produce a warning. Rendering still requires visual acceptance; `pass` is a recorded reviewer judgment, not an automated inference. An explicit `--interpolation hold` override ignores unused motion records as well as unused images.
+
+These records are not a trajectory solver. Apply [motion-planning.md](motion-planning.md) to define property identities, coordinate/reference frames, event timing and multi-state continuity first. For measurable quantities, `motion_checks` is separate from the image-slot plan: it describes final output at shot-local frame indices, including in-between samples. Its schema and observation workflow are in [motion-checks.md](motion-checks.md). Output expectations remain active with interpolation overrides; revise the intent explicitly if an override changes it.
 
 ## Event timing and render reports
 

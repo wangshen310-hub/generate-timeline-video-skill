@@ -3,6 +3,12 @@
 The renderer keeps a zero-Python-dependency path while allowing an optional
 learned interpolator for difficult motion.
 
+Choose from the planned change and source correspondence, using the shared
+[representative-test workflow](motion-planning.md) before expanding new motion.
+These are candidate backends, not guarantees by subject category. In particular,
+pairwise interpolation has no persistent object model or cross-keyframe velocity
+constraint; compatible inputs, timing and output review remain necessary.
+
 | Backend | Best for | Runtime dependency | Failure behavior |
 | --- | --- | --- | --- |
 | hold | Intentional stills and camera-only motion | FFmpeg | Fails on FFmpeg errors |

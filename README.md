@@ -6,13 +6,13 @@ This Codex skill turns a written timeline into a reproducible MP4 by generating 
 
 ## 工作原理
 
-1. Codex 把脚本拆成时间线和镜头。
-2. 项目先按动作密度规划带时间点的语义关键帧，再由图像生成能力创建身份一致的姿态图。
-3. `hold`、`blend` 或 FFmpeg motion-compensated interpolation 补齐中间帧。
-4. FFmpeg 合并镜头、转场和可选音轨。
-5. `ffprobe` 校验分辨率、帧率、帧数和时长。
+1. 明确每个镜头的可观察目标：什么保持不变、什么连续变化、什么是离散事件，以及相对于画面、场景或其他对象的关系。
+2. 按轨迹、速度变化、接触和遮挡等事件安排关键帧；检查提示词中的约束是否冲突。
+3. 用图像生成能力制作代表性短片的素材，检查实际图片能否组成连续过程，再用 `hold`、`blend`、FFmpeg 光流或可选 RIFE 渲染试验。
+4. 试验通过后扩展时长、合并镜头和可选音轨，再检查新接头与整段播放。
+5. 分别验证文件技术指标、可测属性与视觉表现；缺少播放审查保持待审，已知缺陷需要返修。
 
-插帧并不能从两张图片恢复物理上完全正确的运动。大幅姿态、构图或物体变化应该增加关键帧。
+插帧无法从任意两张图片恢复正确的运动。先判断缺陷属于意图/约束、源图、时间安排、插值还是合成，再修复相应环节；更多关键帧和更高帧率本身不保证流畅。
 
 ## 目录
 
@@ -38,7 +38,8 @@ This Codex skill turns a written timeline into a reproducible MP4 by generating 
 - `render ... --cache-dir .timeline-cache --command-timeout 300` 保留已验证的片段，按图片、参数、工具和模型内容失效；中断后可复用已完成片段。
 - `inspect final.mp4 --manifest timeline.json --output-dir review-001` 生成相邻图片对照、带帧号的成片抽样、异常位置和本地播放页。检查结果默认待审，不把技术通过当作视觉通过。
 - `review-status review-001 --write` 核对检查记录、未解决问题和受检视频哈希。播放未检查或存在问题时只能交付待审预览；该命令不代替视觉判断。
-- 连续动作先规划阶段、方向和速度变化，快速形变先试验最难区间。不能为了避开插帧困难而擅自加入静止或切镜，也不能把固定关键帧间隔当作流畅度保证。
+- 可选 `motion_checks` 为输出属性声明参考系、预期采样、容差和速度/加速度范围；`validate` 检查计划一致性。`inspect` 生成绑定视频哈希的 `motion-observations.json` 空模板，`review-status` 比较真实测量与计划。它不自动追踪像素，也不能从文字状态推断自然运动。
+- 所有场景共享[运动规划流程](generate-timeline-video/references/motion-planning.md)：跨三个以上状态检查节奏，新运动设置先试验代表区间，周期动作先验收完整周期；简单静态镜头可直接用自身验证。固定场景坐标与固定屏幕坐标需要区分，避免约束冲突。
 
 缓存是可丢弃的临时资产，不应放在源素材目录。真实 RIFE 运行时仍需单独提供；CI 使用可控的运动边缘推理替身验证时间采样和实际编码结果，不能代替真实模型的视觉质检。
 
@@ -58,7 +59,7 @@ This Codex skill turns a written timeline into a reproducible MP4 by generating 
 python -m unittest discover -s tests -v
 ```
 
-CI 在 Python 3.10 和 3.13 上运行单元测试、真实 FFmpeg 集成测试及三个固定示例的校验。RIFE 实际推理需要外部运行时，默认测试只覆盖其命令构造和失败回退。
+CI 在 Python 3.10 和 3.13 上运行单元测试、真实 FFmpeg 集成测试及三个固定示例的校验。数值约束测试覆盖静止、连续变化、离散事件、非均匀采样和方向反转，并从实际编码的画面检测停顿/突变与转场时间映射。RIFE 实际推理需要外部运行时；CI 的可控推理替身验证采样逻辑，不能证明真实生成内容自然。
 
 Windows PowerShell 示例：
 
@@ -99,7 +100,7 @@ python3 "$SCRIPT" init my-video \
   --subject-motion articulated
 
 python3 "$SCRIPT" plan-keyframes my-video/timeline.json --write
-# 先生成 plan-keyframes 输出中列出的所有 missing_images，再继续。
+# 先规划可观察属性并试验代表性区间；通过后再扩展，补齐 missing_images。
 python3 "$SCRIPT" validate my-video/timeline.json
 python3 "$SCRIPT" render my-video/timeline.json --output my-video/output/final.mp4
 python3 "$SCRIPT" probe my-video/output/final.mp4 --manifest my-video/timeline.json
@@ -115,7 +116,7 @@ python3 "$SCRIPT" probe my-video/output/final.mp4 --manifest my-video/timeline.j
 
 演示视频技术指标：1280×720、24 fps、72 帧、3 秒、H.264 MP4，无音轨。
 
-这是一个刻意使用稀疏关键帧的插值压力测试。跑步包含大幅肢体运动，仅用三个关键帧会在中间帧出现可见的光流重影；实际制作应先声明 `subject_motion: "articulated"`，用 `plan-keyframes --write` 把语义姿态间隔控制在约 0.25 秒，再生成对应图片；插帧后端只负责相邻姿态之间的补帧。
+这是一个刻意使用稀疏关键帧的插值压力测试。跑步包含大幅肢体运动，仅用三个关键帧会在中间帧出现可见的光流重影。实际制作应遵循共享规划与试验流程；`subject_motion: "articulated"` 的 0.25 秒默认间隔只检查采样密度，不能证明轨迹、步态或节奏正确。
 
 ## Quality controls and optional backends
 
@@ -184,6 +185,6 @@ manifest on every push and pull request.
 
 ## Motion-positive demo
 
-The fixed `seaside-running-test/` input is intentionally sparse for renderer regression. The older [`seaside-running-motion-test/`](seaside-running-motion-test/README.md) adds one stride midpoint per shot but is still too sparse to prove fluent articulated motion. Use `plan-keyframes --write` and the 0.25-second policy for production motion tests.
+The fixed `seaside-running-test/` input is intentionally sparse for renderer regression. The older [`seaside-running-motion-test/`](seaside-running-motion-test/README.md) adds one stride midpoint per shot but does not prove fluent articulated motion. Production uses the shared property/trajectory/pilot workflow; the 0.25-second spacing policy is only a sampling check.
 
 The renderer now warns when adjacent optical-flow or RIFE keyframes are byte-identical, because interpolation cannot invent motion between duplicate poses.
