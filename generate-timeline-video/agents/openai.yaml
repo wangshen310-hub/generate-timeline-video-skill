@@ -1,4 +1,4 @@
 interface:
-  display_name: "时间线视频生成器"
-  short_description: "从时间线生成一致的 AI 关键帧并合成为 24 fps 视频"
-  default_prompt: "使用 $generate-timeline-video 把我的时间线制作成连贯的 24 fps MP4 视频。"
+  display_name: "静帧 GIF 生成器"
+  short_description: "将连续静帧按动作节奏与逐帧时长合成为 GIF，并检查循环衔接和画面一致性"
+  default_prompt: "使用 $generate-timeline-video 规划连续静帧，制作逐帧 GIF 动图并检查播放与循环衔接。"
