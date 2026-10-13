@@ -30,3 +30,9 @@ Commands use `scripts/still_gif.py`: `init <directory> --frames N` creates place
 Sources are fitted without cropping, padded/flattened to white, and quantized with a shared palette and ordered dithering. The output has no audio or preserved transparency. Temporary files are created beside the output and cleaned after success or failure. Source-path normalization is reused within one render. Output publication occurs only after exact GIF block/timing validation and full decode; no-force publication uses atomic exclusive creation.
 
 Reports include per-frame durations, total duration, loop count (`0` infinite, `null` once), dimensions and SHA-256. `technical_status: pass` means file checks passed. `visual_status: not_reviewed` is intentional: the CLI cannot certify playback, motion, appearance or loop continuity. Inspect those separately before describing the result as accepted.
+
+## Workflow and optional encoding
+
+`plan` is optional for legacy technical rendering but required for reviewed delivery; see [review-workflow.md](review-workflow.md). `init` now adds a plan skeleton and reports actual missing/existing image paths. Fill it before generation. Empty placeholders do not pass plan-check.
+
+Optional `encoding` accepts `colors` (integer 4–256, default 256) and `dither` (`bayer`, `none`, `sierra2_4a`; default bayer). Compare palette detail, flicker and byte size on the actual preview. All other encoding fields are rejected. Each render reports encoding, bytes and `delivery_status: preview`; use the review/publish workflow for accepted delivery.

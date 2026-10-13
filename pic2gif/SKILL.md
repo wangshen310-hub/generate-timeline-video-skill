@@ -1,59 +1,69 @@
 ---
 name: pic2gif
-description: Create animated GIFs from an ordered sequence of still images, using image generation or supplied pictures, explicit per-frame timing, palette encoding, loop planning, and output verification. Use for 静帧生成GIF、图片序列动画、逐帧动图 and storyboard-to-GIF requests.
+description: Create and review animated GIFs from ordered still images, with explicit frame timing, motion or still intent, optional property measurements and fixed-region checks, and hash-bound acceptance before final publication. Use for 静帧生成GIF、图片序列动画、逐帧动图 and storyboard-to-GIF requests.
 ---
 
 # pic2gif
 
-Create a reproducible frame-by-frame GIF. Each supplied still becomes one displayed frame with an explicit duration. The default output is GIF, not MP4. Do not invoke RIFE, optical flow, LTX, pixel blending, or automatic in-between generation in this workflow. GIF encoding does not itself make sparse poses move naturally.
+Each still is one displayed frame with an explicit exposure. Use image generation or supplied images, then GIF encoding; do not introduce RIFE, optical flow, LTX or synthetic in-between frames. GIF encoding cannot make an incoherent sequence natural.
 
-The skill directory and invocation name are `pic2gif`. The previous MP4 workflow is retained in [legacy-video-workflow.md](references/legacy-video-workflow.md), only for an explicit request to use that older pipeline. Its interpolation planning, fps rules and review commands do not apply to GIF manifests.
+The older MP4 renderer remains available only for an explicit legacy request; see [legacy-video-workflow.md](references/legacy-video-workflow.md). Its schema and commands are separate.
 
-## 1. Plan the actual displayed frames
+## 1. Plan the change before generating assets
 
-Start with a short, meaningful animation or complete cycle. Use a 512-pixel longest edge, preserving the requested aspect ratio, and 100 ms per image as an initial practical setting. Adjust timing to the action, not a mandatory frame rate. A typical initial pilot has 8–16 distinct states; this is a workload suggestion, not a quality guarantee. A supplied sequence can use its existing length and dimensions. Keep all assets inside the chosen project directory.
+Resolve `scripts/still_gif.py`, Python 3.10+ and an existing FFmpeg installation. Initialize with `python <script> init <project> --frames N`. Inspect reported `existing_paths` before reuse; the initializer does not overwrite them. Read [gif-schema.md](references/gif-schema.md) for timing and encoding, and [review-workflow.md](references/review-workflow.md) for plan/check/review fields.
 
-Record what changes, what stays fixed and the reference frame (screen, scene or another object). Plan each displayed state and duration before bulk image generation. Include anticipation, contact, reversals, peaks and settling where relevant. For non-character scenes, track relevant shape, position, light, material, water, smoke or other changes. Do not insert eyes, ears or anatomy checks into scenes that lack them.
+Choose duration, aspect ratio, intended playback and a representative pilot from the request. A 512-pixel longest edge and 100ms exposures are useful starting points, not movement requirements. Frame count follows the necessary changes, contacts, reversals and events; do not fit every action into 8 or 12 poses. Plan the complete cycle for cyclic action, or the critical event for a one-way sequence, before expanding the workload. If a file-size requirement exists, record `plan.max_bytes` before encoding.
 
-For characters or animals, coordinate the primary action with relevant gaze, head, ears, tail, limbs and contact. Secondary motion can lag the main motion; it need not change in every frame. Keep intentional stillness. Resolve contradictory constraints, such as screen-fixed scenery paired with a tracking camera.
+Declare `plan.intent` as `motion` or `still`, and `source_mode` as `generated` or `provided`. Record a concise summary, each displayed `state`, exposure and generation prompt (prompts are optional for provided images). Keep the original plan and describe later revisions; retrospective analysis of provided assets must not be presented as a plan made before generation.
 
-For looping motion, plan a complete cycle and inspect last → first as another adjacent step. Normally omit a duplicate first pose at the end: its extra exposure creates a pause. Keep an endpoint hold only when intentional. Do not reverse the sequence automatically: ping-pong playback can reverse gravity, contact, smoke or other one-way processes. For a non-looping event, set `loop: false` unless the user requests a designed reset.
+Identify what changes, what stays fixed, and relative to what. Where a property can be measured meaningfully, declare optional `measurements` with property, reference space, units, per-frame expectations, tolerance and appropriate speed/acceleration bounds. Select constraints from intended behavior, not subject keywords. Units and measurements must agree; this tool does not infer physical coordinates. Some properties are discrete or cyclic; do not impose continuous speed bounds on a discrete event, or treat wrapped angles as ordinary linear coordinates without unwrapping them.
 
-## 2. Create the manifest
+For truly fixed screen regions, optionally declare normalized `fixed_regions` and an acceptable RGB MAE from frame 0. Do not include intended lighting changes, moving texture, effects or camera motion in an invariant region. Choose tolerance before inspecting the candidate; do not widen it merely to turn a failure green. Record legitimate plan changes and create a new review.
 
-Locate `scripts/still_gif.py` in this skill directory. Use Python 3.10+ and FFmpeg already available on PATH. The script uses only Python's standard library; no RIFE or generative video model is required. If FFmpeg is missing, resolve an existing installation before proposing installation.
+For characters, coordinate relevant secondary features with the action, permitting intentional stillness or lag. Other scenes use relevant properties such as position, shape, illumination, scale or event boundaries. A scene without characters needs no anatomy checklist.
 
-```text
-python <skill-dir>/scripts/still_gif.py init <project-dir> --frames 12
-python <skill-dir>/scripts/still_gif.py validate <project-dir>/gif.json --allow-missing
-```
+For loops, plan the last-to-first change and its duration like every other edge. Usually omit a duplicated starting pose at the end unless a pause is intended. Avoid automatic reversal for irreversible events. Use `loop: false` for a one-way event without an intentional reset.
 
-Read [gif-schema.md](references/gif-schema.md) for explicit timing, loop settings and commands. Fill each frame's `state` and `prompt` with the actual intended change. The initializer creates slots, not motion. Never silently reuse a video `timeline.json` as a GIF manifest.
+Run `plan-check <project>/gif.json --allow-missing` before generation. This checks structure and declared numerical consistency; it cannot prove when planning occurred or whether a prompt is visually meaningful.
 
-## 3. Generate or collect still frames
+## 2. Generate, save and check a representative sequence
 
-Use supplied images when requested. Otherwise use the available image-generation capability, following its applicable instructions, rather than drawing replacement artwork in Python.
+Use provided artwork when requested; otherwise use the available image-generation capability and its applicable skill. Every displayed pose must exist as a source image. Do not draw replacement artwork in Python.
 
-- Establish an inspected anchor for appearance, style, composition and any fixed background.
-- Use the preceding accepted frame for progression and the anchor for identity when references are supported. Anchor-only references do not establish temporal motion.
-- Generate small incremental state changes with consistent framing. Every displayed pose must exist as an actual source image; the encoder will not invent missing poses.
-- Review each image and windows of at least three consecutive states. Check shape, placement, scale, palette, background stability, displacement per interval and appropriate coupled details. For a loop, include the closing window.
-- Fix accidental drift, geometry errors and missing events in the source sequence. If transitions jump, add or redraw the necessary displayed states and adjust exposure times. Repeating a frame changes its hold duration, not its motion smoothness.
+Establish and inspect an anchor. Use the preceding accepted state for progression and the anchor for identity where reference inputs are supported. Match framing and scale. For localized movement, request edits limited to the changing region rather than unnecessarily redesigning the entire scene. References are guidance, not a guarantee that fixed regions remain unchanged.
 
-Render a representative complete cycle or event before expanding an expensive sequence. If generation costs are excessive, shorten or simplify the action within the user's intent rather than silently changing to a video model or interpolator.
+Save each returned image to its planned project path before the next call, inspect it, and record the actual prompt, reference roles, attempt and disposition. If saving/tool-result parsing fails, first recover the already generated asset; do not generate a new image just to obtain another save path. Keep rejected candidates separately. Distinguish generation failures, quality revisions and asset-save retries in the cost record.
 
-## 4. Encode and verify
+Compare each new image with its expected state and a three-state window: position, scale, timing, event order and relevant coupled properties. Check the wrap window for loops. When movement is measurable, compare actual positions and displacement per exposure to the plan. A prompt saying “same height” is not a measurement. Identify fixed-region drift separately from desired changes. Do not use a single global image-difference score as a naturalness verdict.
+
+If a state or interval fails, fix that earliest failure: regenerate the source, add a necessary actual pose, simplify within the requested intent, or revise timing with a recorded reason. Do not merely increase nominal frame rate, repeat pictures, change thresholds, or replace observations with expectations. Use bounded targeted revisions; if a pilot still fails, retain a diagnostic preview and explain the specific limitation instead of expanding it.
+
+## 3. Render a preview and create a review package
 
 ```text
-python <skill-dir>/scripts/still_gif.py validate <project-dir>/gif.json
-python <skill-dir>/scripts/still_gif.py render <project-dir>/gif.json --output <project-dir>/output/final.gif
-python <skill-dir>/scripts/still_gif.py probe <project-dir>/gif.json --output <project-dir>/output/final.gif
+python <script> validate <project>/gif.json
+python <script> render <project>/gif.json --output <project>/preview.gif
+python <script> inspect <project>/gif.json --output <project>/preview.gif --review-dir <project>/review-001
 ```
 
-Encoding fits images to the canvas without cropping, flattens transparency onto white, builds a shared palette and uses fixed ordered dithering. If the design requires a transparent GIF or another background treatment, prepare compatible source artwork or extend the renderer explicitly; do not claim transparency is preserved. GIF has at most 256 palette colors and no audio.
+`render` remains usable with older manifests for diagnostic previews. `inspect` requires a complete plan and creates a new directory with the actual GIF, decoded frame snapshots, an original-speed/three-frame/loop-join review page, diagnostics and `review.json`. Reuse of an existing review directory is refused. Inspect after a changed plan, source or output into a new review directory; previous acceptance does not transfer.
 
-The script verifies GIF dimensions, frame count, every frame delay, total duration and loop extension, then performs full FFmpeg decoding before atomic publication. Without `--force`, existing or concurrently created output is protected. `--force` allows replacement only after verification; sources and manifest remain protected. Commands emit JSON; failures return nonzero. These are technical checks, not a visual assessment.
+Open `review-001/index.html` in a browser. If file navigation is unsupported, serve just this review directory with `python -m http.server 8779 --bind 127.0.0.1 --directory <review-dir>` (choose a free port) and open its loopback URL. A queued panel or a screenshot of one frame does not establish animation playback. The page offers original GIF replay and a frame-by-frame three-state window; for one-shot sequences, navigation stops at endpoints and never reverses playback. Keep the local server scoped to this review directory.
 
-Open the final GIF in a viewer that plays animation, inspect at its intended speed and watch at least two loops when looping. Check discontinuities, unintended pauses, palette flicker/banding, detail loss and the closing step. Frame sheets alone cannot establish playback quality. If playback cannot be inspected, label the delivery as a technically verified preview awaiting playback review. Do not expand a failed pilot and call it accepted.
+Observe intended-speed playback, important events, unwanted pauses, palette artifacts and, for loops, at least two cycles and the closing step. Inspect the frame windows to locate faults, not to substitute for playback. The automated report checks fixed-region RGB differences and identical decoded frames, not aesthetic or physical correctness.
 
-Deliver `final.gif`, `gif.json` and the source images. Report dimensions, frame count, total duration, loop behavior and any remaining visual limitation. Preserve frame prompts and timing for revision. Do not claim that high frame count or a valid file proves natural motion.
+## 4. Record evidence and publish only accepted output
+
+Fill the required entries in `review.json.checks` with `pending`, `pass` or `revise` and concrete notes. List unresolved problems in `issues`. Fill declared measurement `observations` with actual values and their measurement method; empty values start as null. Do not copy expected values into observations. Measurement coordinates refer to the declared space and units; review thumbnails may be scaled and must be converted when measuring output pixels.
+
+```text
+python <script> review-status <project>/review-001
+python <script> publish <project>/review-001 --output <project>/delivery/final.gif
+```
+
+`review-status` returns nonzero for pending, revise or stale results. Missing playback/measurement evidence remains pending; failed checks require revision; material changes invalidate hashes. `publish` only accepts a passing record and atomically copies the reviewed GIF bytes to a separate delivery path after decoding checks. It cannot independently verify the truth of a reviewer note. Never mark pass merely to get past this gate. If visual review is unavailable, deliver `preview.gif` explicitly as unaccepted diagnostic output.
+
+The renderer fits without cropping, pads/flattens transparency to white, and uses a shared palette. GIF supports at most 256 colors and no audio. Optional `encoding.colors`/`dither` support measured size/quality tradeoffs; do not claim transparency is preserved. Technical checks cover dimensions, per-frame delays, frame count, loop mode and decoding. Source/manifest paths and concurrent outputs are protected.
+
+Deliver the accepted GIF or clearly labeled preview with its manifest, source images and review evidence. State frame count, dimensions, duration, loop mode, byte size and remaining limitations. Technical correctness and recorded visual acceptance are separate claims.
