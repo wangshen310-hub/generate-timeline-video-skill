@@ -17,7 +17,7 @@
 ```
 
 - `version`: 1. Canvas width/height are integers from 1 to 4096. Default initializer uses 512×512; choose aspect ratio from the intended artwork.
-- `loop`: boolean, defaults to true (infinite looping). False omits the looping extension and plays once. Design the reset explicitly for non-cyclic events.
+- `loop`: boolean, defaults to true (infinite looping); write true explicitly for new projects. The skill requires a complete cycle planned before image generation, including return states and a continuous last-to-first interval. This flag controls repetition only; it cannot repair a visible reset. False omits the looping extension and plays once, reserved in the skill workflow for an explicit user request.
 - `frames`: nonempty ordered list. List order is playback order, independent of filenames.
 - `image`: path relative to the manifest, or absolute path. Images must exist before rendering. An animated source contributes its first decoded image only.
 - `duration_ms`: integer multiple of 10, range 20–655350 inclusive. GIF stores centiseconds. Delays are not silently rounded. There is no `fps` field: 100 ms means 10 displayed states per second; 80/90 ms alternating can approximate other rates when appropriate.

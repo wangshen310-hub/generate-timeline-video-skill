@@ -23,9 +23,11 @@ This contract supplements `gif-schema.md`. It describes optional measurements, n
 }
 ```
 
-Place this object under `plan` in `gif.json`, matching the actual frame count. This example has no speed constraints and does not imply a physically seamless loop. Decide `loop` and frame exposures from intent.
+Place this object under `plan` in `gif.json`, matching the actual frame count. This example demonstrates measurement syntax only: it is an outward segment, not a ready-to-generate loop. For the default looping workflow, first plan its return states and closing interval in the summary, frames and measurements. Use one-shot playback only at the user's explicit request.
 
 ## Planning
+
+Default to `loop: true`. Before generation, describe the full cycle and its return mechanism in `plan.summary`; assign actual frame states, prompts and exposure budgets to all phases, including the closing interval. These are planning instructions using existing fields, not a new automatically validated schema. Follow the generation and wrap-window checks in [SKILL.md](../SKILL.md). A non-cyclic event needs a coherent planned reset; if that conflicts with the requested event, resolve the creative choice with the user before generating.
 
 - `intent`: `motion` or `still`. It drives duplicate-state handling, not object-specific rules.
 - `source_mode`: `generated` requires nonempty state and prompt on every frame; `provided` requires state only. `summary` is nonempty text. Neither text nor a successful plan check proves semantic quality or historical planning order.
@@ -57,6 +59,8 @@ Run from the skill directory or use the script's absolute path. `inspect` create
 Values start as null, never as the expectations. Measurements can come from appropriate pixel tooling or actual manual annotation; explain the method and limitations. There is no automatic object detector. A metric does not replace human/agent visual review.
 
 Required checks are `source_sequence`, `timing_and_events`, `normal_speed_playback`, plus `loop_join` when looping and `duplicate_holds` when moving content has identical adjacent decoded frames. Each has `status` (`pending`, `pass`, `revise`) and a concrete `note`; pass without a note remains pending. Missing required checks remain pending. Document legitimate repeated exposures in duplicate_holds; a motion plan whose entire decoded sequence is identical requires revision regardless of notes. A still plan permits identical frames.
+
+For `loop_join`, record observations of (penultimate, last, first) and (last, first, second), plus at least two uninterrupted cycles at original speed. Check visible state continuity and motion direction/speed, relevant secondary phases, camera/background/light stability and unintended pauses. Record an unintended jump, flicker or reset as `revise`; insufficient playback evidence stays `pending`. An encoded infinite-loop flag or two identical endpoint poses cannot establish a passing loop. These visual conclusions rely on actual review; the CLI does not infer them from note text.
 
 `review-status` uses exit 0 only for pass; pending/revise/stale return 2, malformed inputs return 1. Known failures take precedence over pending checks. Missing or changed bound artifacts cannot pass; missing paths may report an error instead of stale. Changing a snapshot, source, output, timing, expected values or thresholds requires a new `inspect`. It does not write an acceptance file or automatically turn pending notes into pass.
 
